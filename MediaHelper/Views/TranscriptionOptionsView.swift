@@ -69,10 +69,14 @@ struct TranscriptionOptionsView: View {
         } label: {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(available ? .tint : .secondary)
+                    .foregroundStyle(available
+                                     ? AnyShapeStyle(HierarchicalShapeStyle.primary)
+                                     : AnyShapeStyle(HierarchicalShapeStyle.secondary))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(b.displayName)
-                        .foregroundStyle(available ? .primary : .secondary)
+                        .foregroundStyle(available
+                                         ? AnyShapeStyle(HierarchicalShapeStyle.primary)
+                                         : AnyShapeStyle(HierarchicalShapeStyle.secondary))
                     Text(available ? b.tagline : unavailableReason(b))
                         .font(.caption)
                         .foregroundStyle(.secondary)

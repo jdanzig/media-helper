@@ -59,10 +59,12 @@ final class WhisperKitTranscriber: TranscriptionService {
         var flatSegments: [TranscriptSegment] = []
         var detectedLanguage: String?
         do {
+            // `pipe.transcribe(...)` returns a non-optional array in
+            // current WhisperKit versions, so no `?? []` is needed.
             let raw = try await pipe.transcribe(
                 audioPath: audioFileURL.path,
                 decodeOptions: decodeOptions
-            ) ?? []
+            )
             progress(0.9)
             for r in raw {
                 if detectedLanguage == nil { detectedLanguage = r.language }
