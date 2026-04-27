@@ -51,36 +51,36 @@ final class WhisperKitTranscriber: TranscriptionService {
             withoutTimestamps: false
         )
 
-        // WhisperKit 0.9+ accepts an audio file path (String). Run on a
-        // detached task so the main actor isn't blocked for long jobs.
-        let results: [WhisperKit.TranscriptionResult]
+        // We avoid an explicit `[WhisperKit.TranscriptionResult]`
+        // annotation: `WhisperKit` is both a module name and a class
+        // name in that package, and Swift parses the qualifier as the
+        // class — which has no nested `TranscriptionResult`. Letting
+        // type inference do its thing sidesteps the collision.
+        var flatSegments: [TranscriptSegment] = []
+        var detectedLanguage: String?
         do {
-            let out = try await pipe.transcribe(
+            let raw = try await pipe.transcribe(
                 audioPath: audioFileURL.path,
                 decodeOptions: decodeOptions
-            )
-            results = out ?? []
+            ) ?? []
+            progress(0.9)
+            for r in raw {
+                if detectedLanguage == nil { detectedLanguage = r.language }
+                for s in r.segments {
+                    flatSegments.append(
+                        TranscriptSegment(
+                            start: TimeInterval(s.start),
+                            end: TimeInterval(s.end),
+                            text: s.text.trimmingCharacters(in: .whitespaces),
+                            speaker: nil
+                        )
+                    )
+                }
+            }
         } catch {
             throw TranscriptionError.backendRejected(
                 "WhisperKit transcription failed: \(error.localizedDescription)"
             )
-        }
-        progress(0.9)
-
-        var flatSegments: [TranscriptSegment] = []
-        var detectedLanguage: String?
-        for r in results {
-            if detectedLanguage == nil { detectedLanguage = r.language }
-            for s in r.segments {
-                flatSegments.append(
-                    TranscriptSegment(
-                        start: TimeInterval(s.start),
-                        end: TimeInterval(s.end),
-                        text: s.text.trimmingCharacters(in: .whitespaces),
-                        speaker: nil
-                    )
-                )
-            }
         }
         progress(1.0)
 
