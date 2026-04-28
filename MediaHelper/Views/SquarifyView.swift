@@ -59,6 +59,11 @@ struct SquarifyView: View {
                 .padding(.bottom)
             }
             .navigationTitle("Squarify")
+            // Lock the title to the nav bar. With a `VStack` root and a
+            // nested ScrollView, the large-title transition can drift —
+            // dragging inside the scroll view pulls the large title down
+            // and out of position. Inline mode pins it.
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }

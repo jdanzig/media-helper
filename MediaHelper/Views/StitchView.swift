@@ -71,6 +71,10 @@ struct StitchView: View {
                 .padding(.bottom)
             }
             .navigationTitle("Stitch")
+            // Same drift issue as SquarifyView: nested ScrollView in a
+            // VStack root makes the large title untether from the bar
+            // when the user drags. Inline mode pins it.
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
