@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// UI for the Download tab. Thin: it binds to `DownloadViewModel` and
 /// reacts to published state changes. All business logic lives in the
@@ -36,24 +35,30 @@ struct DownloadView: View {
                         }
                     }
 
-                    // PasteButton triggers the system clipboard read
-                    // without showing iOS's "wants to paste" alert,
-                    // because the user tapped the button explicitly.
+                    // We previously used SwiftUI's `PasteButton`, which
+                    // bypasses iOS's "wants to paste" alert. But its
+                    // enabled-state heuristics aren't reliable across
+                    // every clipboard format (URLs serialized as
+                    // `public.url` bplists vs. plain text vs. attributed
+                    // strings) and the button stayed grayed despite
+                    // obvious clipboard content.
                     //
-                    // We declare BOTH `.url` and `.plainText` because
-                    // iOS often advertises a copied link as `public.url`
-                    // (e.g. from Safari's share sheet) rather than as
-                    // plain text — `payloadType: String.self` would miss
-                    // those and gray the button out.
-                    PasteButton(supportedContentTypes: [.url, .plainText, .utf8PlainText]) { providers in
-                        Task { @MainActor in
-                            if let pasted = await Self.loadFirstString(from: providers) {
-                                vm.urlText = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
-                                vm.urlDidChange()
-                            }
-                        }
+                    // Plain Button + UIPasteboard is bulletproof — it
+                    // costs us a one-time "App wants to paste from X"
+                    // system alert, which is standard iOS UX.
+                    Button {
+                        let pb = UIPasteboard.general
+                        let pasted = pb.url?.absoluteString
+                            ?? pb.string
+                            ?? ""
+                        let trimmed = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return }
+                        vm.urlText = trimmed
+                        vm.urlDidChange()
+                    } label: {
+                        Label("Paste", systemImage: "doc.on.clipboard")
                     }
-                    .labelStyle(.titleAndIcon)
+                    .buttonStyle(.bordered)
                     .buttonBorderShape(.capsule)
 
                     platformRow
@@ -186,41 +191,6 @@ struct DownloadView: View {
         }
     }
 
-    // MARK: - Paste helpers
-
-    /// Pull a string out of the first provider that can offer one.
-    /// Prefers `NSURL` (for shared-link clipboard items), falls back to
-    /// `NSString` for plain-text copies.
-    private static func loadFirstString(from providers: [NSItemProvider]) async -> String? {
-        for provider in providers {
-            if let urlString = await loadURLString(from: provider) {
-                return urlString
-            }
-            if let s = await loadPlainString(from: provider) {
-                return s
-            }
-        }
-        return nil
-    }
-
-    private static func loadURLString(from provider: NSItemProvider) async -> String? {
-        guard provider.canLoadObject(ofClass: NSURL.self) else { return nil }
-        return await withCheckedContinuation { cont in
-            _ = provider.loadObject(ofClass: NSURL.self) { obj, _ in
-                cont.resume(returning: (obj as? URL)?.absoluteString)
-            }
-        }
-    }
-
-    private static func loadPlainString(from provider: NSItemProvider) async -> String? {
-        guard provider.canLoadObject(ofClass: NSString.self) else { return nil }
-        return await withCheckedContinuation { cont in
-            _ = provider.loadObject(ofClass: NSString.self) { obj, _ in
-                let s = (obj as? String) ?? ""
-                cont.resume(returning: s.isEmpty ? nil : s)
-            }
-        }
-    }
 }
 
 #Preview { DownloadView() }
