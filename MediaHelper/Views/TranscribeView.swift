@@ -5,6 +5,7 @@ import PhotosUI
 /// preset + backend, hits Start, and gets whichever artifacts were
 /// requested. Videos go to Photos; `.srt` / `.txt` files are offered
 /// through the share sheet.
+@MainActor
 struct TranscribeView: View {
     @StateObject private var vm = TranscribeViewModel()
     @State private var shareItems: [URL] = []

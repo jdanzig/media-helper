@@ -110,10 +110,15 @@ enum SubtitleBurner {
         exporter.outputFileType = .mp4
         exporter.outputURL = outputURL
 
+        // `AVAssetExportSession` isn't Sendable; box it so we can capture
+        // it inside the continuation's `@Sendable` body without warnings.
+        // The session is owned exclusively by this call.
+        let box = UncheckedSendable(exporter)
+
         // Poll for progress while exporting.
         let progressTask = Task {
             while !Task.isCancelled {
-                let p = Double(exporter.progress)
+                let p = Double(box.value.progress)
                 progress(p)
                 if p >= 1 { break }
                 try? await Task.sleep(nanoseconds: 250_000_000)
@@ -121,12 +126,12 @@ enum SubtitleBurner {
         }
 
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            exporter.exportAsynchronously {
-                switch exporter.status {
+            box.value.exportAsynchronously {
+                switch box.value.status {
                 case .completed: cont.resume()
                 case .failed, .cancelled:
                     cont.resume(throwing: TranscriptionError.audioExtractionFailed(
-                        exporter.error?.localizedDescription ?? "export failed"
+                        box.value.error?.localizedDescription ?? "export failed"
                     ))
                 default:
                     cont.resume(throwing: TranscriptionError.audioExtractionFailed("unexpected state"))

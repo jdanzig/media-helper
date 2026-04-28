@@ -176,7 +176,7 @@ struct TwitterResolver: MediaResolver {
     /// `Number#toString(36)` closely enough for the syndication token.
     private static func radix36(_ value: Double) -> String {
         guard value.isFinite else { return "0" }
-        var whole = Int64(value)
+        let whole = Int64(value)
         var frac = value - Double(whole)
 
         let digits = "0123456789abcdefghijklmnopqrstuvwxyz"

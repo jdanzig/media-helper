@@ -35,14 +35,22 @@ enum AudioExtractor {
         // iOS 18 adds an async `export(to:as:)`; older SDKs use the
         // callback-based `exportAsynchronously`. Stick with the wrapper
         // below so we compile against iOS 17.
+        //
+        // `AVAssetExportSession` isn't Sendable, but `withCheckedThrowing
+        // Continuation`'s body parameter is `@Sendable` under strict
+        // concurrency. The exporter is genuinely owned by this single
+        // call (we created it locally, no one else has a reference), so
+        // we wrap it in an `@unchecked Sendable` box to silence the
+        // checker without changing runtime behavior.
+        let box = UncheckedSendable(exporter)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            exporter.exportAsynchronously {
-                switch exporter.status {
+            box.value.exportAsynchronously {
+                switch box.value.status {
                 case .completed:
                     cont.resume()
                 case .failed, .cancelled:
                     cont.resume(throwing: TranscriptionError.audioExtractionFailed(
-                        exporter.error?.localizedDescription ?? "export failed"
+                        box.value.error?.localizedDescription ?? "export failed"
                     ))
                 default:
                     // .waiting / .exporting shouldn't ever land here —

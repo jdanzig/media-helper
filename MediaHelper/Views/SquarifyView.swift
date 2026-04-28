@@ -3,6 +3,7 @@ import PhotosUI
 
 /// UI for the Squarify tab. One image in, one square image out, with
 /// padding filled by the top-left pixel color of the source.
+@MainActor
 struct SquarifyView: View {
     @StateObject private var vm = SquarifyViewModel()
 

@@ -4,6 +4,7 @@ import PhotosUI
 /// UI for the Stitch tab. The picker lets the user select multiple images;
 /// a segmented control chooses vertical vs horizontal layout; the preview
 /// shows the composite output; a Save button writes it to Photos.
+@MainActor
 struct StitchView: View {
     @StateObject private var vm = StitchViewModel()
 
