@@ -13,13 +13,40 @@ struct DownloadView: View {
         NavigationStack {
             Form {
                 Section("URL") {
-                    TextField("Paste a YouTube / X / TikTok / Instagram / Facebook link",
-                              text: $vm.urlText, axis: .vertical)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                        .focused($urlFieldFocused)
-                        .onChange(of: vm.urlText) { _, _ in vm.urlDidChange() }
+                    HStack(spacing: 8) {
+                        TextField("Paste a YouTube / X / TikTok / Instagram / Facebook link",
+                                  text: $vm.urlText, axis: .vertical)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                            .focused($urlFieldFocused)
+                            .onChange(of: vm.urlText) { _, _ in vm.urlDidChange() }
+
+                        if !vm.urlText.isEmpty {
+                            Button {
+                                vm.urlText = ""
+                                vm.urlDidChange()
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Clear URL")
+                        }
+                    }
+
+                    // PasteButton triggers the system clipboard read
+                    // without showing iOS's "wants to paste" alert,
+                    // because user tapped the button explicitly.
+                    PasteButton(payloadType: String.self) { strings in
+                        guard let s = strings.first else { return }
+                        Task { @MainActor in
+                            vm.urlText = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                            vm.urlDidChange()
+                        }
+                    }
+                    .labelStyle(.titleAndIcon)
+                    .buttonBorderShape(.capsule)
 
                     platformRow
                 }
@@ -72,6 +99,21 @@ struct DownloadView: View {
                 }
             }
             .navigationTitle("Download")
+            .scrollDismissesKeyboard(.immediately)
+            // Tap on any inert spot in the form (between cells / on a
+            // section header) drops focus. Interactive cells like the
+            // TextField and Buttons intercept first, which is what we
+            // want — this only fires on the "empty" parts of the form.
+            .onTapGesture { urlFieldFocused = false }
+            .toolbar {
+                // Tap-anywhere-to-dismiss isn't quite a thing in Form,
+                // so a Done button on the keyboard accessory bar gives
+                // the user a clear way to put the keyboard down.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { urlFieldFocused = false }
+                }
+            }
             .sheet(isPresented: $isSharePresented) {
                 ShareSheet(items: shareItems)
             }

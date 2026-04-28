@@ -4,52 +4,114 @@ import Foundation
 ///
 /// Public downloaders (yt-dlp, cobalt, etc.) work by calling YouTube's
 /// internal `youtubei/v1/player` endpoint with a client context that
-/// mimics the first-party iOS / Android apps. Those clients receive
-/// stream URLs directly in the response — no JavaScript "signature
-/// cipher" to reverse, no WebView needed.
+/// mimics the first-party iOS / Android / TV apps. Different clients
+/// have different blocking patterns at any given moment — Google plays
+/// whack-a-mole and keeps tightening, so we try several in order and
+/// take the first one that returns playable streams.
 ///
-/// We pose as the iOS YouTube app here because that client historically
-/// returns the widest set of progressive (muxed audio+video) MP4s. If
-/// Google tightens this, swap `clientName` to `ANDROID` or
-/// `WEB_EMBEDDED_PLAYER` — the rest of the code stays the same.
+/// Order picked to maximize success rate as of 2026:
+///  1. **ANDROID_VR** — the Quest YouTube app. Largely ignored by anti-
+///     bot measures and returns progressive MP4s.
+///  2. **ANDROID** — most stable for non-age-gated content.
+///  3. **TVHTML5_SIMPLY_EMBEDDED_PLAYER** — handles age-gated and works
+///     when iOS/Android are challenged for a PoToken.
+///  4. **IOS** — kept as a final fallback. Increasingly serves 400/403
+///     to clients that don't carry a freshly minted PoToken.
 ///
 /// Known limits:
-///  - Age-gated videos usually need the `TVHTML5_SIMPLY_EMBEDDED_PLAYER`
-///    client. TODO: retry with that client when `playabilityStatus` is
-///    `LOGIN_REQUIRED`.
+///  - PoToken-gated videos (Google's anti-bot challenge) ultimately
+///    return UI-friendly errors; a robust fix would need a JS engine.
 ///  - Live streams return HLS manifests (m3u8) rather than a single
 ///    progressive MP4. The downloader doesn't handle HLS assembly.
 struct YouTubeResolver: MediaResolver {
     let platform: SocialPlatform = .youtube
 
-    // Publicly known key the YouTube iOS app uses to authenticate
-    // against the InnerTube gateway. Not a secret — it ships in every
-    // `youtubei` request the app makes.
+    // Publicly known key the YouTube apps use to authenticate against
+    // the InnerTube gateway. Not a secret — it ships in every
+    // `youtubei` request from every client.
     private static let innertubeKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc"
-    private static let clientVersion = "19.09.3"
-    private static let userAgent = "com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)"
+
+    /// One row of the table of clients we'll try in order.
+    private struct ClientProfile {
+        let name: String
+        let version: String
+        let userAgent: String
+        let extra: [String: Any]
+    }
+
+    private static let clients: [ClientProfile] = [
+        // ANDROID_VR — quietest of the lot. Used by the Meta Quest app.
+        ClientProfile(
+            name: "ANDROID_VR",
+            version: "1.60.19",
+            userAgent: "com.google.android.apps.youtube.vr.oculus/1.60.19 " +
+                       "(Linux; U; Android 12L; en_US; Quest 3) gzip",
+            extra: ["deviceMake": "Oculus", "deviceModel": "Quest 3",
+                    "androidSdkVersion": 32, "osName": "Android", "osVersion": "12L"]
+        ),
+        // ANDROID — main consumer client.
+        ClientProfile(
+            name: "ANDROID",
+            version: "19.09.37",
+            userAgent: "com.google.android.youtube/19.09.37 (Linux; U; Android 14; en_US) gzip",
+            extra: ["androidSdkVersion": 34, "osName": "Android", "osVersion": "14"]
+        ),
+        // TV embedded player — used to handle age-gated videos.
+        ClientProfile(
+            name: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+            version: "2.0",
+            userAgent: "Mozilla/5.0 (PlayStation; PlayStation 4/8.03) AppleWebKit/605.1.15 " +
+                       "(KHTML, like Gecko) Version/13.0 Safari/605.1.15",
+            extra: [:]
+        ),
+        // IOS — historically reliable, increasingly PoToken-challenged.
+        ClientProfile(
+            name: "IOS",
+            version: "19.09.3",
+            userAgent: "com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)",
+            extra: ["deviceModel": "iPhone14,3"]
+        )
+    ]
 
     func resolve(_ url: URL) async throws -> ResolverResult {
         guard let videoID = Self.extractVideoID(from: url) else {
             throw DownloadError.resolutionFailed("couldn't find a video ID in that URL.")
         }
 
+        var lastError: Error?
+        for client in Self.clients {
+            do {
+                return try await Self.resolveWithClient(client, videoID: videoID)
+            } catch {
+                lastError = error
+                continue
+            }
+        }
+        // No client worked. Surface the last error verbatim — usually it's
+        // YouTube's own message ("Sign in to confirm you're not a bot",
+        // "Video unavailable", etc.) which is more useful than a generic.
+        throw lastError ?? DownloadError.resolutionFailed("all InnerTube clients failed.")
+    }
+
+    /// Single-client attempt. Returns a `ResolverResult` if the video is
+    /// reachable, throws otherwise.
+    private static func resolveWithClient(_ client: ClientProfile,
+                                          videoID: String) async throws -> ResolverResult {
         let endpoint = URL(string:
-            "https://youtubei.googleapis.com/youtubei/v1/player?key=\(Self.innertubeKey)"
+            "https://youtubei.googleapis.com/youtubei/v1/player?key=\(innertubeKey)"
         )!
 
-        // Matches what the iOS app sends. Keys are order-insensitive.
+        var clientContext: [String: Any] = [
+            "clientName": client.name,
+            "clientVersion": client.version,
+            "hl": "en",
+            "timeZone": "UTC",
+            "utcOffsetMinutes": 0
+        ]
+        for (k, v) in client.extra { clientContext[k] = v }
+
         let body: [String: Any] = [
-            "context": [
-                "client": [
-                    "clientName": "IOS",
-                    "clientVersion": Self.clientVersion,
-                    "deviceModel": "iPhone14,3",
-                    "hl": "en",
-                    "timeZone": "UTC",
-                    "utcOffsetMinutes": 0
-                ]
-            ],
+            "context": ["client": clientContext],
             "videoId": videoID,
             "contentCheckOk": true,
             "racyCheckOk": true
@@ -58,25 +120,21 @@ struct YouTubeResolver: MediaResolver {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(client.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let data: Data
-        do {
-            let (d, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                throw DownloadError.networkFailed("InnerTube HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
-            }
-            data = d
-        } catch let e as DownloadError { throw e }
-        catch { throw DownloadError.networkFailed(error.localizedDescription) }
-
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw DownloadError.resolutionFailed("InnerTube returned a non-JSON response.")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw DownloadError.networkFailed(
+                "\(client.name) HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"
+            )
         }
 
-        // Surface Google's own error string if playback is blocked.
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw DownloadError.resolutionFailed("\(client.name): non-JSON response.")
+        }
+
         if let playability = json["playabilityStatus"] as? [String: Any],
            let status = playability["status"] as? String,
            status != "OK" {
@@ -85,22 +143,17 @@ struct YouTubeResolver: MediaResolver {
         }
 
         guard let streamingData = json["streamingData"] as? [String: Any] else {
-            throw DownloadError.resolutionFailed("no streamingData in InnerTube response.")
+            throw DownloadError.resolutionFailed("\(client.name): no streamingData.")
         }
 
-        // `formats` is the progressive (single-file) list; `adaptiveFormats`
-        // are DASH (split audio+video). We prefer progressive so the
-        // downloader can hand the file straight to Photos.
         let progressive = (streamingData["formats"] as? [[String: Any]]) ?? []
-
-        guard let best = Self.pickBestProgressive(progressive) else {
+        guard let best = pickBestProgressive(progressive) else {
             throw DownloadError.resolutionFailed(
-                "no progressive MP4 available (this video may be adaptive-only — " +
-                "merging audio+video DASH streams is a TODO)."
+                "\(client.name): no progressive MP4 available."
             )
         }
         guard let urlString = best["url"] as? String, let mediaURL = URL(string: urlString) else {
-            throw DownloadError.resolutionFailed("chosen format had no direct URL.")
+            throw DownloadError.resolutionFailed("\(client.name): chosen format had no direct URL.")
         }
 
         let details = json["videoDetails"] as? [String: Any]

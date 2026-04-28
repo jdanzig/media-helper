@@ -30,13 +30,25 @@ struct InstagramResolver: MediaResolver {
         "(KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
     func resolve(_ url: URL) async throws -> ResolverResult {
-        // 1. Try the embed endpoint.
-        if let shortcode = Self.extractShortcode(from: url),
-           let result = try? await resolveViaEmbed(shortcode: shortcode) {
+        // Instagram's embed endpoint started obfuscating `video_url` for
+        // some Reels in 2024-2025 — the JSON field is sometimes missing
+        // even though the post is a video, so we'd fall through to
+        // `display_url` and silently return the thumbnail. Try og:video
+        // on the canonical page first; it's set for public Reels and
+        // is the source of truth.
+        if let result = try? await resolveViaOpenGraph(url), result.isVideo {
             return result
         }
 
-        // 2. Fall back to scraping og:video on the regular page.
+        // Embed fallback for posts where og:video isn't populated.
+        if let shortcode = Self.extractShortcode(from: url),
+           let result = try? await resolveViaEmbed(shortcode: shortcode), result.isVideo {
+            return result
+        }
+
+        // Last resort: rerun og:video parse and accept whatever it gives
+        // (image fallback). At this point we know it's not a video, so
+        // returning an image is the best we can do.
         return try await resolveViaOpenGraph(url)
     }
 
@@ -63,8 +75,28 @@ struct InstagramResolver: MediaResolver {
             in: html, pattern: #"<div class="CaptionUsername"[^>]*>([^<]+)</div>"#
         ) ?? HTMLScraper.metaContent(html, property: "og:title")
 
-        // Videos: the inlined JSON uses the key `"video_url":"…"`.
-        if let videoString = Self.extractEscapedString(html: html, key: "video_url"),
+        // Videos: try several keys in order. Instagram has shipped at
+        // least three shapes in the last few years:
+        //   "video_url":"…"          (older)
+        //   "videoUrl":"…"           (newer GraphQL passthrough)
+        //   inside JSON-LD: "contentUrl":"…"
+        let videoKeys = ["video_url", "videoUrl", "contentUrl"]
+        for key in videoKeys {
+            if let s = Self.extractEscapedString(html: html, key: key),
+               let videoURL = URL(string: s) {
+                let thumb = Self.extractEscapedString(html: html, key: "display_url")
+                    .flatMap(URL.init(string:))
+                return ResolverResult(
+                    mediaURL: videoURL, title: title, thumbnailURL: thumb,
+                    isVideo: true, platform: .instagram
+                )
+            }
+        }
+
+        // og:video on the embed page (Instagram populates this for some
+        // posts even when the inlined JSON has been gutted).
+        if let videoString = HTMLScraper.metaContent(html, property: "og:video")
+            ?? HTMLScraper.metaContent(html, property: "og:video:secure_url"),
            let videoURL = URL(string: videoString) {
             let thumb = Self.extractEscapedString(html: html, key: "display_url")
                 .flatMap(URL.init(string:))
