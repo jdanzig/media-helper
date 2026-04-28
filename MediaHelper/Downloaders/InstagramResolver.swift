@@ -125,12 +125,30 @@ struct InstagramResolver: MediaResolver {
         let title = HTMLScraper.metaContent(html, property: "og:title")
         let thumb = HTMLScraper.metaContent(html, property: "og:image").flatMap(URL.init(string:))
 
+        // 1. og:video meta — works for some public posts.
         if let videoString = HTMLScraper.metaContent(html, property: "og:video")
             ?? HTMLScraper.metaContent(html, property: "og:video:secure_url"),
            let videoURL = URL(string: videoString) {
             return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumb,
                                   isVideo: true, platform: .instagram)
         }
+
+        // 2. Modern Reels inline the video URL inside script JSON as
+        // `"playable_url":"..."` (preferred) or
+        // `"playable_url_quality_hd":"..."`. Scan for those before
+        // giving up. Higher-quality key wins when both present.
+        let inlineKeys = ["playable_url_quality_hd", "playable_url",
+                          "video_url", "videoUrl", "contentUrl"]
+        for key in inlineKeys {
+            if let candidate = Self.extractEscapedString(html: html, key: key),
+               let videoURL = URL(string: candidate) {
+                return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumb,
+                                      isVideo: true, platform: .instagram)
+            }
+        }
+
+        // 3. As a last resort, hand back the still image. The app's
+        // caller can decide whether that's what the user wanted.
         if let imageURL = thumb {
             return ResolverResult(mediaURL: imageURL, title: title, thumbnailURL: imageURL,
                                   isVideo: false, platform: .instagram)

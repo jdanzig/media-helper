@@ -71,10 +71,7 @@ struct DownloadView: View {
                 )
 
                 Section("Status") {
-                    Text(vm.statusMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-
+                    statusBanner
                     if showsProgressBar {
                         ProgressView(value: vm.progress)
                         Text("\(Int(vm.progress * 100))%")
@@ -98,10 +95,19 @@ struct DownloadView: View {
                         urlFieldFocused = false
                         Task { await vm.start() }
                     } label: {
-                        Label("Download", systemImage: "arrow.down.circle.fill")
-                            .frame(maxWidth: .infinity)
+                        HStack {
+                            if isWorking {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .padding(.trailing, 6)
+                            } else {
+                                Image(systemName: "arrow.down.circle.fill")
+                            }
+                            Text(isWorking ? "Working…" : "Download")
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                    .disabled(!canStart)
+                    .disabled(!canStart || isWorking)
 
                     if case .done = vm.phase, let outputs = vm.outputs {
                         outputsView(outputs)
@@ -113,11 +119,11 @@ struct DownloadView: View {
             }
             .navigationTitle("Download")
             .scrollDismissesKeyboard(.immediately)
-            // Tap on any inert spot in the form (between cells / on a
-            // section header) drops focus. Interactive cells like the
-            // TextField and Buttons intercept first, which is what we
-            // want — this only fires on the "empty" parts of the form.
-            .onTapGesture { urlFieldFocused = false }
+            // Note: an `.onTapGesture` at this level was intercepting
+            // some Button taps inside the Form (Buttons inside a Form
+            // section don't reliably claim taps over a parent gesture),
+            // so we rely on `scrollDismissesKeyboard` plus the keyboard
+            // toolbar's Done button to dismiss the keyboard.
             .toolbar {
                 // Tap-anywhere-to-dismiss isn't quite a thing in Form,
                 // so a Done button on the keyboard accessory bar gives
@@ -191,6 +197,40 @@ struct DownloadView: View {
         }
     }
 
+    /// True while a download/transcribe is actively running. Drives the
+    /// inline spinner on the Download button so the user has an
+    /// unmistakable signal that work is happening.
+    private var isWorking: Bool {
+        switch vm.phase {
+        case .resolving, .downloading, .postProcessing: return true
+        default: return false
+        }
+    }
+
+    /// More visually obvious status row than plain footnote text: pairs
+    /// the message with an SF Symbol that reflects the current phase.
+    @ViewBuilder
+    private var statusBanner: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            switch vm.phase {
+            case .idle, .detecting:
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+            case .resolving, .downloading, .postProcessing:
+                ProgressView().controlSize(.small)
+            case .done:
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            case .failed:
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            }
+            Text(vm.statusMessage)
+                .font(.footnote)
+                .foregroundStyle(isWorking ? Color.primary : .secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 }
 
 #Preview { DownloadView() }

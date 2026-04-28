@@ -20,8 +20,11 @@ enum HTMLScraper {
 
     /// Fetch raw HTML for a URL. Sends a desktop User-Agent so that
     /// platforms don't serve us their mobile interstitial page.
+    /// 15-second timeout: prefer surfacing a clean network error to
+    /// hanging the UI on a stuck request.
     static func fetchHTML(_ url: URL) async throws -> String {
         var req = URLRequest(url: url)
+        req.timeoutInterval = 15
         req.setValue(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 " +
             "(KHTML, like Gecko) Version/17.0 Safari/605.1.15",

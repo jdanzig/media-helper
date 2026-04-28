@@ -48,6 +48,7 @@ struct TikTokResolver: MediaResolver {
         catch { throw DownloadError.networkFailed(error.localizedDescription) }
 
         var req = URLRequest(url: landingURL)
+        req.timeoutInterval = 15
         req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
 
@@ -123,6 +124,7 @@ struct TikTokResolver: MediaResolver {
         for _ in 0..<maxHops {
             var req = URLRequest(url: current)
             req.httpMethod = "HEAD"
+            req.timeoutInterval = 8
             req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
             // Don't auto-follow — we want to inspect each redirect.
             let delegate = NoFollowDelegate()
