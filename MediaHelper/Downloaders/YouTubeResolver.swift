@@ -9,97 +9,118 @@ import Foundation
 /// whack-a-mole and keeps tightening, so we try several in order and
 /// take the first one that returns playable streams.
 ///
+/// **Endpoint choice matters.** `youtubei.googleapis.com/youtubei/v1/player`
+/// (with `?key=…`) applies PoToken enforcement to most clients. The
+/// `www.youtube.com/youtubei/v1/player` path does not require a key and
+/// is what yt-dlp uses for its ANDROID_TESTSUITE bypass. We try the
+/// www-subdomain endpoint first and fall back to the googleapis one.
+///
 /// Order picked to maximize success rate as of 2026:
-///  1. **ANDROID_TESTSUITE** — Google's internal test harness client.
-///     Exempt from PoToken enforcement and returns progressive MP4s.
-///     This is what yt-dlp uses as its primary bypass strategy.
-///  2. **ANDROID_VR** — the Quest YouTube app. Also largely ignored by
-///     anti-bot measures and returns progressive MP4s.
-///  3. **ANDROID** — most stable for non-age-gated content.
-///  4. **TVHTML5_SIMPLY_EMBEDDED_PLAYER** — handles age-gated and works
-///     when mobile clients are challenged for a PoToken.
-///  5. **IOS** — kept as a final fallback. Increasingly serves 400/403
-///     to clients that don't carry a freshly minted PoToken.
+///  1. **ANDROID_TESTSUITE** — Google's internal test harness client (ID 30).
+///     Exempt from PoToken enforcement; yt-dlp uses this as its primary
+///     bypass. Must be called against www.youtube.com, not the googleapis
+///     gateway.
+///  2. **ANDROID_VR** — Quest YouTube app. Also largely PoToken-exempt.
+///  3. **MWEB** — lightweight mobile-web client.
+///  4. **ANDROID** — main consumer client.
+///  5. **TVHTML5_SIMPLY_EMBEDDED_PLAYER** — handles age-gated content.
+///  6. **WEB_EMBEDDED_PLAYER** — embed-surface, sometimes more permissive.
+///  7. **IOS** — final fallback; increasingly PoToken-challenged.
 ///
 /// Known limits:
-///  - PoToken-gated videos (Google's anti-bot challenge) ultimately
-///    return UI-friendly errors; a robust fix would need a JS engine.
+///  - PoToken-gated videos that block all clients ultimately need a JS
+///    engine to solve the challenge — out of scope here.
 ///  - Live streams return HLS manifests (m3u8) rather than a single
 ///    progressive MP4. The downloader doesn't handle HLS assembly.
 struct YouTubeResolver: MediaResolver {
     let platform: SocialPlatform = .youtube
 
-    // Publicly known key the YouTube apps use to authenticate against
-    // the InnerTube gateway. Not a secret — it ships in every
-    // `youtubei` request from every client.
-    private static let innertubeKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc"
+    /// InnerTube endpoint on the www subdomain. Does **not** require an
+    /// API key; client identity is established via the User-Agent and the
+    /// `X-Youtube-Client-Name` / `X-Youtube-Client-Version` headers.
+    private static let wwwEndpoint =
+        URL(string: "https://www.youtube.com/youtubei/v1/player")!
+
+    /// Fallback InnerTube endpoint on the googleapis subdomain. Requires
+    /// a key and is subject to stricter PoToken enforcement, but still
+    /// occasionally works when the www endpoint returns a 404 or empty
+    /// streamingData.
+    private static let apiEndpoint =
+        URL(string: "https://youtubei.googleapis.com/youtubei/v1/player" +
+                    "?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w")!
 
     /// One row of the table of clients we'll try in order.
     private struct ClientProfile {
+        /// Name sent in the `clientName` body field.
         let name: String
+        /// Integer sent in `X-Youtube-Client-Name`.
+        /// Reference: https://github.com/yt-dlp/yt-dlp (innertubeClientMap)
+        let clientID: Int
         let version: String
         let userAgent: String
         let extra: [String: Any]
     }
 
     private static let clients: [ClientProfile] = [
-        // ANDROID_TESTSUITE — Google's own internal QA client. Not subject
-        // to PoToken enforcement as of 2025-2026 because Google exempts
-        // its own test infra. Returns progressive MP4s. yt-dlp uses this
-        // client as its primary evasion of the bot-challenge gate.
+        // ANDROID_TESTSUITE (30) — Google's own QA client. PoToken-exempt.
+        // yt-dlp uses this as its primary bypass against the bot gate.
         ClientProfile(
             name: "ANDROID_TESTSUITE",
+            clientID: 30,
             version: "1.9",
             userAgent: "com.google.android.youtube/1.9 (Linux; U; Android 11) gzip",
             extra: ["androidSdkVersion": 30, "osName": "Android", "osVersion": "11"]
         ),
-        // ANDROID_VR — quietest of the lot. Used by the Meta Quest app.
+        // ANDROID_VR (28) — Meta Quest YouTube app. Also largely exempt.
         ClientProfile(
             name: "ANDROID_VR",
+            clientID: 28,
             version: "1.60.19",
             userAgent: "com.google.android.apps.youtube.vr.oculus/1.60.19 " +
                        "(Linux; U; Android 12L; en_US; Quest 3) gzip",
             extra: ["deviceMake": "Oculus", "deviceModel": "Quest 3",
                     "androidSdkVersion": 32, "osName": "Android", "osVersion": "12L"]
         ),
-        // MWEB — the mobile-web client. Lightweight, no PoToken in many
-        // regions. Worth trying before the heavier mobile-app clients.
+        // MWEB (2) — mobile-web client, lightweight and often PoToken-free.
         ClientProfile(
             name: "MWEB",
+            clientID: 2,
             version: "2.20240814.07.00",
             userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) " +
                        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 " +
                        "Mobile/15E148 Safari/604.1",
             extra: [:]
         ),
-        // ANDROID — main consumer client.
+        // ANDROID (3) — main consumer client.
         ClientProfile(
             name: "ANDROID",
+            clientID: 3,
             version: "19.09.37",
             userAgent: "com.google.android.youtube/19.09.37 (Linux; U; Android 14; en_US) gzip",
             extra: ["androidSdkVersion": 34, "osName": "Android", "osVersion": "14"]
         ),
-        // TV embedded player — handles age-gated videos.
+        // TVHTML5_SIMPLY_EMBEDDED_PLAYER (85) — handles age-gated videos.
         ClientProfile(
             name: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+            clientID: 85,
             version: "2.0",
             userAgent: "Mozilla/5.0 (PlayStation; PlayStation 4/8.03) AppleWebKit/605.1.15 " +
                        "(KHTML, like Gecko) Version/13.0 Safari/605.1.15",
             extra: [:]
         ),
-        // WEB_EMBEDDED_PLAYER — what `youtube.com/embed/<id>` runs.
-        // Sometimes returns playable streams when other clients are
-        // PoToken-challenged because the embed surface is more permissive.
+        // WEB_EMBEDDED_PLAYER (56) — embed surface, sometimes more permissive.
         ClientProfile(
             name: "WEB_EMBEDDED_PLAYER",
+            clientID: 56,
             version: "1.20240814.01.00",
             userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 " +
                        "(KHTML, like Gecko) Version/17.0 Safari/605.1.15",
             extra: [:]
         ),
-        // IOS — historically reliable, increasingly PoToken-challenged.
+        // IOS (5) — final fallback; increasingly requires PoToken.
         ClientProfile(
             name: "IOS",
+            clientID: 5,
             version: "19.09.3",
             userAgent: "com.google.ios.youtube/19.09.3 (iPhone14,3; U; CPU iOS 15_6 like Mac OS X)",
             extra: ["deviceModel": "iPhone14,3"]
@@ -113,27 +134,32 @@ struct YouTubeResolver: MediaResolver {
 
         var lastError: Error?
         for client in Self.clients {
+            // Try the www endpoint first (no key, PoToken-exempt path).
+            if let result = try? await Self.resolveWithClient(
+                client, videoID: videoID, endpoint: Self.wwwEndpoint
+            ) {
+                return result
+            }
+            // Fall back to the googleapis endpoint with key.
             do {
-                return try await Self.resolveWithClient(client, videoID: videoID)
+                return try await Self.resolveWithClient(
+                    client, videoID: videoID, endpoint: Self.apiEndpoint
+                )
             } catch {
                 lastError = error
                 continue
             }
         }
-        // No client worked. Surface the last error verbatim — usually it's
-        // YouTube's own message ("Sign in to confirm you're not a bot",
+        // No client / endpoint combo worked. Surface the last error verbatim —
+        // usually YouTube's own message ("Sign in to confirm you're not a bot",
         // "Video unavailable", etc.) which is more useful than a generic.
         throw lastError ?? DownloadError.resolutionFailed("all InnerTube clients failed.")
     }
 
-    /// Single-client attempt. Returns a `ResolverResult` if the video is
-    /// reachable, throws otherwise.
+    /// Single-client + single-endpoint attempt.
     private static func resolveWithClient(_ client: ClientProfile,
-                                          videoID: String) async throws -> ResolverResult {
-        let endpoint = URL(string:
-            "https://youtubei.googleapis.com/youtubei/v1/player?key=\(innertubeKey)"
-        )!
-
+                                          videoID: String,
+                                          endpoint: URL) async throws -> ResolverResult {
         var clientContext: [String: Any] = [
             "clientName": client.name,
             "clientVersion": client.version,
@@ -152,10 +178,14 @@ struct YouTubeResolver: MediaResolver {
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.timeoutInterval = 12   // surface failures fast — we have 4 clients to try
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(client.userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.timeoutInterval = 12   // fast failure so we can try the next client
+        request.setValue("application/json",        forHTTPHeaderField: "Content-Type")
+        request.setValue(client.userAgent,           forHTTPHeaderField: "User-Agent")
+        request.setValue("en-US,en;q=0.9",          forHTTPHeaderField: "Accept-Language")
+        // These headers identify the client on the www-subdomain endpoint
+        // (which doesn't use a key). They're harmless on the googleapis endpoint.
+        request.setValue("\(client.clientID)",       forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue(client.version,             forHTTPHeaderField: "X-Youtube-Client-Version")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -206,7 +236,7 @@ struct YouTubeResolver: MediaResolver {
 
     // MARK: - Helpers
 
-    /// Extract the 11-character video ID from any youtube URL form:
+    /// Extract the 11-character video ID from any YouTube URL form:
     /// `youtube.com/watch?v=…`, `youtu.be/…`, `/shorts/…`, `/embed/…`, `/live/…`.
     static func extractVideoID(from url: URL) -> String? {
         guard let host = url.host?.lowercased() else { return nil }
@@ -235,7 +265,7 @@ struct YouTubeResolver: MediaResolver {
 
     private static func sanitizeID(_ raw: String) -> String? {
         // IDs are [A-Za-z0-9_-] and typically 11 chars. Strip anything after
-        // a query-like char to tolerate share suffixes.
+        // a query-like character to tolerate share suffixes.
         let cleaned = raw.split(whereSeparator: { "?&#".contains($0) }).first.map(String.init) ?? raw
         guard cleaned.count >= 11,
               cleaned.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }) else {
@@ -244,19 +274,19 @@ struct YouTubeResolver: MediaResolver {
         return String(cleaned.prefix(11))
     }
 
-    /// Pick the highest-quality progressive MP4 that isn't DRM-locked.
+    /// Pick the highest-quality progressive MP4 (audio+video muxed).
     /// Rough ranking: 720p > 360p > others; MP4 > WebM as a tiebreaker.
     private static func pickBestProgressive(_ formats: [[String: Any]]) -> [String: Any]? {
         let usable = formats.filter { f in
             guard let mime = f["mimeType"] as? String else { return false }
-            // Progressive formats with both audio+video codecs listed.
+            // Progressive formats list two codecs (video + audio) separated by ", ".
             return mime.contains("video/") && mime.contains(",")
         }
         return usable.max { a, b in
             let ha = (a["height"] as? Int) ?? 0
             let hb = (b["height"] as? Int) ?? 0
             if ha != hb { return ha < hb }
-            // Prefer mp4 when heights tie.
+            // Prefer mp4 over webm when heights are equal.
             let ma = ((a["mimeType"] as? String) ?? "").contains("mp4")
             let mb = ((b["mimeType"] as? String) ?? "").contains("mp4")
             return !ma && mb
