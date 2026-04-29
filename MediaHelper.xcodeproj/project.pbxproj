@@ -6,6 +6,25 @@
 	objectVersion = 71;
 	objects = {
 
+/* Begin XCRemoteSwiftPackageReference section */
+		A100000000000000000001B0 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/WhisperKit";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.6.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A100000000000000000001C0 /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A100000000000000000001B0 /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = WhisperKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+
 /* Begin PBXFileReference section */
 		A100000000000000000000B0 /* MediaHelper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MediaHelper.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000190 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
@@ -81,6 +100,7 @@
 			);
 			name = MediaHelper;
 			packageProductDependencies = (
+				A100000000000000000001C0 /* WhisperKit */,
 			);
 			productName = MediaHelper;
 			productReference = A100000000000000000000B0 /* MediaHelper.app */;
@@ -114,6 +134,9 @@
 			productRefGroup = A100000000000000000000E0 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
+			packageReferences = (
+				A100000000000000000001B0 /* XCRemoteSwiftPackageReference "WhisperKit" */,
+			);
 			targets = (
 				A100000000000000000000F0 /* MediaHelper */,
 			);
