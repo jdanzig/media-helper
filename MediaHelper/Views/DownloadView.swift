@@ -92,7 +92,7 @@ struct DownloadView: View {
                             shareItems = [fileURL]
                             isSharePresented = true
                         } label: {
-                            Label("Share / Open in Photos", systemImage: "square.and.arrow.up")
+                            Label("Share", systemImage: "square.and.arrow.up")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
