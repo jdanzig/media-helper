@@ -25,31 +25,60 @@ import Foundation
 struct InstagramResolver: MediaResolver {
     let platform: SocialPlatform = .instagram
 
-    private static let userAgent =
+    private static let desktopUserAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 " +
         "(KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
+    /// Instagram's iOS app User-Agent. Hitting the canonical reel URL
+    /// with this UA sometimes nudges the server into rendering the
+    /// inline media JSON we need (instead of the JS-only shell that
+    /// modern desktop browsers get).
+    private static let appUserAgent =
+        "Instagram 250.0.0.21.109 (iPhone14,3; iOS 17_0; en_US; en; " +
+        "scale=3.00; 1170x2532; 401047810) AppleWebKit/420+"
+
+    /// Whether the URL is unambiguously a video post (`/reel/`, `/tv/`).
+    /// `/p/` could be either a photo or a video post — only treat the
+    /// reel/IGTV paths as "must be video, otherwise error".
+    private static func pathImpliesVideo(_ url: URL) -> Bool {
+        let first = url.path.split(separator: "/").first.map(String.init)?.lowercased()
+        return first == "reel" || first == "reels" || first == "tv"
+    }
+
     func resolve(_ url: URL) async throws -> ResolverResult {
-        // Instagram's embed endpoint started obfuscating `video_url` for
-        // some Reels in 2024-2025 — the JSON field is sometimes missing
-        // even though the post is a video, so we'd fall through to
-        // `display_url` and silently return the thumbnail. Try og:video
-        // on the canonical page first; it's set for public Reels and
-        // is the source of truth.
-        if let result = try? await resolveViaOpenGraph(url), result.isVideo {
+        let pathIsVideo = Self.pathImpliesVideo(url)
+
+        // 1. Canonical page with desktop UA.
+        if let result = try? await resolveViaOpenGraph(url, userAgent: Self.desktopUserAgent),
+           result.isVideo {
             return result
         }
 
-        // Embed fallback for posts where og:video isn't populated.
+        // 2. Embed endpoint (`…/embed/captioned`).
         if let shortcode = Self.extractShortcode(from: url),
-           let result = try? await resolveViaEmbed(shortcode: shortcode), result.isVideo {
+           let result = try? await resolveViaEmbed(shortcode: shortcode),
+           result.isVideo {
             return result
         }
 
-        // Last resort: rerun og:video parse and accept whatever it gives
-        // (image fallback). At this point we know it's not a video, so
-        // returning an image is the best we can do.
-        return try await resolveViaOpenGraph(url)
+        // 3. Canonical page with the IG iOS app UA. Different rendering
+        //    path on the server, which sometimes inlines video URLs the
+        //    desktop variant strips out.
+        if let result = try? await resolveViaOpenGraph(url, userAgent: Self.appUserAgent),
+           result.isVideo {
+            return result
+        }
+
+        // 4. Give up. Refuse to silently hand back the thumbnail when
+        //    the user pasted a URL whose path means "video" — they
+        //    expect a video. Photo-only paths (/p/) get the image.
+        if pathIsVideo {
+            throw DownloadError.resolutionFailed(
+                "couldn't find a public video URL on the Reel page. Instagram may " +
+                "be requiring login for this post, or the markup just shifted again."
+            )
+        }
+        return try await resolveViaOpenGraph(url, userAgent: Self.desktopUserAgent)
     }
 
     // MARK: - Embed path
@@ -60,7 +89,8 @@ struct InstagramResolver: MediaResolver {
         }
 
         var req = URLRequest(url: embedURL)
-        req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        req.timeoutInterval = 15
+        req.setValue(Self.desktopUserAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
 
         let (data, response) = try await URLSession.shared.data(for: req)
@@ -120,8 +150,9 @@ struct InstagramResolver: MediaResolver {
 
     // MARK: - OpenGraph fallback
 
-    private func resolveViaOpenGraph(_ url: URL) async throws -> ResolverResult {
-        let html = try await HTMLScraper.fetchHTML(url)
+    private func resolveViaOpenGraph(_ url: URL,
+                                     userAgent: String) async throws -> ResolverResult {
+        let html = try await Self.fetchHTML(url, userAgent: userAgent)
         let title = HTMLScraper.metaContent(html, property: "og:title")
         let thumb = HTMLScraper.metaContent(html, property: "og:image").flatMap(URL.init(string:))
 
@@ -198,6 +229,26 @@ struct InstagramResolver: MediaResolver {
             pattern: #"(https?:[^"\\]+?\.mp4[^"\\]*)"#
         ) else { return nil }
         return decodeJSONString(raw)
+    }
+
+    /// Fetch a page using a configurable User-Agent. Different UAs get
+    /// served different markup by Instagram's edge — desktop returns a
+    /// JS shell with no media data for logged-out viewers, while the
+    /// in-app UA sometimes inlines the video URL we need.
+    private static func fetchHTML(_ url: URL, userAgent: String) async throws -> String {
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 15
+        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200..<400).contains(http.statusCode) else {
+            throw DownloadError.networkFailed("IG HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+        }
+        guard let html = String(data: data, encoding: .utf8) else {
+            throw DownloadError.resolutionFailed("non-UTF8 response.")
+        }
+        return html
     }
 
     /// Decode the subset of JSON string escapes Instagram uses:
