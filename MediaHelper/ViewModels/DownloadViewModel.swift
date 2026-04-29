@@ -227,7 +227,9 @@ final class DownloadViewModel: ObservableObject {
         resolved = nil
         outputs = nil
         clipboardSuggestion = nil
-        // Clear the memory so the same link can be re-suggested after a reset.
         lastOfferedClipboard = ""
+        // Re-check the clipboard immediately so the suggestion banner
+        // reappears right after clearing, without needing to re-foreground.
+        checkClipboard()
     }
 }
