@@ -2,28 +2,40 @@ import Foundation
 
 /// Instagram resolver.
 ///
-/// Instagram walled off its public GraphQL endpoints, but the public
-/// **embed page** (`instagram.com/{reel|p|tv}/{shortcode}/embed/captioned`)
-/// still renders a non-auth HTML page with the full media payload
-/// embedded as a JSON literal inside a `<script>`. Most "download
-/// Instagram video" sites use exactly this endpoint — it's the last
-/// unauthenticated surface that still exposes media URLs reliably.
+/// Strategy (tried in order, first video result wins):
 ///
-/// Strategy:
-///  1. Normalize the URL → extract shortcode → hit `…/embed/captioned`.
-///  2. Scan the HTML for the inlined JSON containing `video_url` /
-///     `display_url`.
-///  3. Unicode-unescape and return. For carousels, the embed shows only
-///     the first slide — that's the common case and matches what
-///     public sites deliver.
-///  4. Fall back to the classic og:video / og:image scrape.
+///  1. **Private GraphQL API** — POST to `instagram.com/api/graphql` with
+///     a known `doc_id` query and `X-IG-App-ID` header. Returns structured
+///     JSON with `xdt_shortcode_media.video_url` for public posts without
+///     requiring a login cookie. This is the most reliable unauthenticated
+///     surface as of 2026.
+///     ⚠️  Instagram rotates `doc_id` every few weeks — update
+///     `graphqlDocID` when this pass starts failing.
 ///
-/// TODO: Private posts and most stories now require login. A production
-///       implementation would wrap an in-app WebView to collect the
-///       user's session cookies, then POST to `i.instagram.com/api/v1/
-///       media/{id}/info/`. Out of scope here; error surfaced clearly.
+///  2. **Canonical page / desktop UA** — og:video meta + inline JSON sweep.
+///
+///  3. **Embed page** (`…/embed/captioned`) — older JSON shapes.
+///
+///  4. **Canonical page / iOS app UA** — different server rendering path.
+///
+/// Private/stories posts require login — surfaced as a clear error.
 struct InstagramResolver: MediaResolver {
     let platform: SocialPlatform = .instagram
+
+    /// GraphQL `doc_id` for the `xdt_shortcode_media` query.
+    /// Instagram rotates this periodically — update it when pass 1 starts
+    /// returning empty `data` objects. Cross-reference with:
+    /// github.com/ahmedrangel/instagram-media-scraper
+    private static let graphqlDocID = "10015901848480474"
+
+    /// LSD token required by Instagram's GraphQL gateway.
+    /// Same value used across all unauthenticated requests (static enough
+    /// to hardcode; refresh alongside graphqlDocID if needed).
+    private static let lsdToken = "AVqbxe3J_YA"
+
+    /// Instagram's public web app ID. Present in every IG web request;
+    /// not a secret — it's embedded in their public JavaScript bundle.
+    private static let igAppID = "936619743392459"
 
     private static let desktopUserAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 " +
@@ -47,29 +59,36 @@ struct InstagramResolver: MediaResolver {
 
     func resolve(_ url: URL) async throws -> ResolverResult {
         let pathIsVideo = Self.pathImpliesVideo(url)
+        let shortcode = Self.extractShortcode(from: url)
 
-        // 1. Canonical page with desktop UA.
+        // 1. Private GraphQL API — structured JSON, no login needed for
+        //    public posts. Most reliable as of 2026; try this first.
+        if let sc = shortcode,
+           let result = try? await resolveViaGraphQL(shortcode: sc),
+           result.isVideo {
+            return result
+        }
+
+        // 2. Canonical page with desktop UA.
         if let result = try? await resolveViaOpenGraph(url, userAgent: Self.desktopUserAgent),
            result.isVideo {
             return result
         }
 
-        // 2. Embed endpoint (`…/embed/captioned`).
-        if let shortcode = Self.extractShortcode(from: url),
-           let result = try? await resolveViaEmbed(shortcode: shortcode),
+        // 3. Embed endpoint (`…/embed/captioned`).
+        if let sc = shortcode,
+           let result = try? await resolveViaEmbed(shortcode: sc),
            result.isVideo {
             return result
         }
 
-        // 3. Canonical page with the IG iOS app UA. Different rendering
-        //    path on the server, which sometimes inlines video URLs the
-        //    desktop variant strips out.
+        // 4. Canonical page with the IG iOS app UA.
         if let result = try? await resolveViaOpenGraph(url, userAgent: Self.appUserAgent),
            result.isVideo {
             return result
         }
 
-        // 4. Give up. Refuse to silently hand back the thumbnail when
+        // 5. Give up. Refuse to silently hand back the thumbnail when
         //    the user pasted a URL whose path means "video" — they
         //    expect a video. Photo-only paths (/p/) get the image.
         if pathIsVideo {
@@ -78,7 +97,94 @@ struct InstagramResolver: MediaResolver {
                 "be requiring login for this post, or the markup just shifted again."
             )
         }
+
+        // For /p/ paths, try GraphQL for the image too before falling back.
+        if let sc = shortcode,
+           let result = try? await resolveViaGraphQL(shortcode: sc) {
+            return result
+        }
         return try await resolveViaOpenGraph(url, userAgent: Self.desktopUserAgent)
+    }
+
+    // MARK: - GraphQL API (pass 1)
+
+    /// POST to Instagram's private GraphQL gateway with a known doc_id.
+    /// Returns `xdt_shortcode_media` JSON for public posts without a
+    /// session cookie. No login required.
+    ///
+    /// Response shape (simplified):
+    /// ```json
+    /// { "data": { "xdt_shortcode_media": {
+    ///     "is_video": true,
+    ///     "video_url": "https://…cdn….mp4",
+    ///     "display_url": "https://…cdn….jpg",
+    ///     "owner": { "username": "…" }
+    /// }}}
+    /// ```
+    private func resolveViaGraphQL(shortcode: String) async throws -> ResolverResult {
+        guard let endpoint = URL(string: "https://www.instagram.com/api/graphql") else {
+            throw DownloadError.resolutionFailed("couldn't build GraphQL URL.")
+        }
+
+        let variables = "{\"shortcode\":\"\(shortcode)\"}"
+
+        // Form-encoded body — Instagram's GraphQL gateway expects
+        // application/x-www-form-urlencoded, not application/json.
+        var bodyComps = URLComponents()
+        bodyComps.queryItems = [
+            URLQueryItem(name: "doc_id",   value: Self.graphqlDocID),
+            URLQueryItem(name: "lsd",      value: Self.lsdToken),
+            URLQueryItem(name: "variables", value: variables)
+        ]
+        guard let body = bodyComps.percentEncodedQuery?.data(using: .utf8) else {
+            throw DownloadError.resolutionFailed("couldn't encode GraphQL body.")
+        }
+
+        var req = URLRequest(url: endpoint)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        req.httpBody = body
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue(Self.desktopUserAgent,                forHTTPHeaderField: "User-Agent")
+        req.setValue(Self.igAppID,                         forHTTPHeaderField: "X-IG-App-ID")
+        req.setValue(Self.lsdToken,                        forHTTPHeaderField: "X-FB-LSD")
+        req.setValue("129477",                             forHTTPHeaderField: "X-ASBD-ID")
+        req.setValue("same-origin",                        forHTTPHeaderField: "Sec-Fetch-Site")
+        req.setValue("https://www.instagram.com",          forHTTPHeaderField: "Origin")
+        req.setValue("https://www.instagram.com/",         forHTTPHeaderField: "Referer")
+        req.setValue("en-US,en;q=0.9",                    forHTTPHeaderField: "Accept-Language")
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw DownloadError.networkFailed(
+                "IG GraphQL HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"
+            )
+        }
+
+        guard let json     = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let jsonData  = json["data"]                    as? [String: Any],
+              let media     = jsonData["xdt_shortcode_media"] as? [String: Any] else {
+            throw DownloadError.resolutionFailed("GraphQL: unexpected response shape.")
+        }
+
+        let username = (media["owner"] as? [String: Any])?["username"] as? String
+        let title    = username.map { "@\($0)" }
+        let thumbURL = (media["display_url"] as? String).flatMap(URL.init(string:))
+        let isVideo  = media["is_video"] as? Bool ?? false
+
+        if isVideo,
+           let urlString = media["video_url"] as? String,
+           let videoURL  = URL(string: urlString) {
+            return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumbURL,
+                                  isVideo: true, platform: .instagram)
+        }
+
+        if let imageURL = thumbURL {
+            return ResolverResult(mediaURL: imageURL, title: title, thumbnailURL: imageURL,
+                                  isVideo: false, platform: .instagram)
+        }
+
+        throw DownloadError.resolutionFailed("GraphQL: media found but no URL extracted.")
     }
 
     // MARK: - Embed path
