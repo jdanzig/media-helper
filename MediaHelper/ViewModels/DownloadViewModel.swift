@@ -50,12 +50,19 @@ final class DownloadViewModel: ObservableObject {
 
     // MARK: Actions
 
-    /// Called as the user types. Runs URL parsing only — no network yet.
+    /// Called as the user types or pastes. Runs URL parsing only — no network yet.
+    /// Also rewrites `urlText` with the tracking-stripped URL so the user
+    /// sees the clean version in the text field immediately.
     func urlDidChange() {
         resolved = nil
         outputs = nil
         progress = 0
         if let url = SocialURLParser.url(from: urlText) {
+            // Strip tracking params and reflect the clean URL back to the
+            // text field. Guard against equality so we don't recurse.
+            let cleaned = url.absoluteString
+            if cleaned != urlText { urlText = cleaned }
+
             detectedPlatform = SocialURLParser.detectPlatform(url)
             if detectedPlatform == .unknown {
                 statusMessage = "Not a recognized social URL."
