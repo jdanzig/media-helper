@@ -36,32 +36,6 @@ struct DownloadView: View {
                         }
                     }
 
-                    // We previously used SwiftUI's `PasteButton`, which
-                    // bypasses iOS's "wants to paste" alert. But its
-                    // enabled-state heuristics aren't reliable across
-                    // every clipboard format (URLs serialized as
-                    // `public.url` bplists vs. plain text vs. attributed
-                    // strings) and the button stayed grayed despite
-                    // obvious clipboard content.
-                    //
-                    // Plain Button + UIPasteboard is bulletproof — it
-                    // costs us a one-time "App wants to paste from X"
-                    // system alert, which is standard iOS UX.
-                    Button {
-                        let pb = UIPasteboard.general
-                        let pasted = pb.url?.absoluteString
-                            ?? pb.string
-                            ?? ""
-                        let trimmed = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return }
-                        vm.urlText = trimmed
-                        vm.urlDidChange()
-                    } label: {
-                        Label("Paste", systemImage: "doc.on.clipboard")
-                    }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.capsule)
-
                     platformRow
 
                     if let suggestion = vm.clipboardSuggestion {
