@@ -30,6 +30,14 @@ final class DownloadViewModel: ObservableObject {
     @Published private(set) var resolved: ResolverResult?
     @Published private(set) var outputs: TranscriptionOutputs?
 
+    /// Non-nil when the clipboard contains a recognized social URL that
+    /// the user hasn't been prompted about yet. Drives the suggestion banner.
+    @Published private(set) var clipboardSuggestion: (url: String, platform: SocialPlatform)?
+
+    /// Last raw clipboard string we already surfaced as a suggestion,
+    /// so we don't re-prompt every time the app comes to the foreground.
+    private var lastOfferedClipboard: String = ""
+
     // User-chosen post-processing options (mirrored from `TranscriptionOptionsView`).
     @Published var preset: TranscriptionPreset = .videoOnly
     @Published var backend: TranscriptionBackend = TranscriptionServiceFactory.defaultAvailableBackend()
@@ -63,6 +71,9 @@ final class DownloadViewModel: ObservableObject {
             let cleaned = url.absoluteString
             if cleaned != urlText { urlText = cleaned }
 
+            // Hide the clipboard suggestion once the user has something in the field.
+            clipboardSuggestion = nil
+
             detectedPlatform = SocialURLParser.detectPlatform(url)
             if detectedPlatform == .unknown {
                 statusMessage = "Not a recognized social URL."
@@ -76,6 +87,31 @@ final class DownloadViewModel: ObservableObject {
             statusMessage = "Paste a link above."
             phase = .idle
         }
+    }
+
+    /// Check the clipboard for a recognized social URL and surface it as
+    /// a suggestion banner. Called when the app comes to the foreground.
+    /// No-ops if the text field already has content, or if the clipboard
+    /// hasn't changed since the last time we offered a suggestion.
+    func checkClipboard() {
+        guard urlText.isEmpty else { return }
+
+        let raw = UIPasteboard.general.url?.absoluteString
+                ?? UIPasteboard.general.string
+                ?? ""
+        guard !raw.isEmpty, raw != lastOfferedClipboard else { return }
+
+        guard let url = SocialURLParser.url(from: raw) else { return }
+        let platform = SocialURLParser.detectPlatform(url)
+        guard platform != .unknown else { return }
+
+        lastOfferedClipboard = raw
+        clipboardSuggestion = (url: url.absoluteString, platform: platform)
+    }
+
+    /// Dismiss the clipboard suggestion without pasting (e.g. user taps ✕).
+    func dismissClipboardSuggestion() {
+        clipboardSuggestion = nil
     }
 
     /// Resolve, download, and (for videos) optionally transcribe / burn
@@ -182,5 +218,8 @@ final class DownloadViewModel: ObservableObject {
         progress = 0
         resolved = nil
         outputs = nil
+        clipboardSuggestion = nil
+        // Clear the memory so the same link can be re-suggested after a reset.
+        lastOfferedClipboard = ""
     }
 }

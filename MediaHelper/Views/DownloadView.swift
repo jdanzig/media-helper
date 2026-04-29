@@ -8,6 +8,7 @@ struct DownloadView: View {
     @FocusState private var urlFieldFocused: Bool
     @State private var shareItems: [URL] = []
     @State private var isSharePresented = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
@@ -62,6 +63,10 @@ struct DownloadView: View {
                     .buttonBorderShape(.capsule)
 
                     platformRow
+
+                    if let suggestion = vm.clipboardSuggestion {
+                        clipboardSuggestionRow(suggestion)
+                    }
                 }
 
                 TranscriptionOptionsView(
@@ -119,6 +124,10 @@ struct DownloadView: View {
             }
             .navigationTitle("Download")
             .scrollDismissesKeyboard(.immediately)
+            .onAppear { vm.checkClipboard() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { vm.checkClipboard() }
+            }
             // Note: an `.onTapGesture` at this level was intercepting
             // some Button taps inside the Form (Buttons inside a Form
             // section don't reliably claim taps over a parent gesture),
@@ -137,6 +146,45 @@ struct DownloadView: View {
                 ShareSheet(items: shareItems)
             }
         }
+    }
+
+    @ViewBuilder
+    private func clipboardSuggestionRow(_ suggestion: (url: String, platform: SocialPlatform)) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: suggestion.platform.symbol)
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Link copied from \(suggestion.platform.displayName)")
+                    .font(.subheadline)
+                Text(suggestion.url)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            Button {
+                vm.urlText = suggestion.url
+                vm.urlDidChange()
+            } label: {
+                Text("Paste")
+                    .font(.subheadline.bold())
+            }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
+            .controlSize(.small)
+
+            Button {
+                vm.dismissClipboardSuggestion()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss suggestion")
+        }
+        .padding(.vertical, 4)
     }
 
     private var platformRow: some View {
