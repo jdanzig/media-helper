@@ -69,11 +69,20 @@ final class WhisperKitTranscriber: TranscriptionService {
             for r in raw {
                 if detectedLanguage == nil { detectedLanguage = r.language }
                 for s in r.segments {
+                    // WhisperKit can leave special tokens like
+                    // <|startoftranscript|>, <|en|>, <|3.68|> etc. in the
+                    // raw segment text. Strip them before storing.
+                    let clean = s.text
+                        .replacingOccurrences(of: #"<\|[^|]*\|>"#,
+                                              with: "",
+                                              options: .regularExpression)
+                        .trimmingCharacters(in: .whitespaces)
+                    guard !clean.isEmpty else { continue }
                     flatSegments.append(
                         TranscriptSegment(
                             start: TimeInterval(s.start),
                             end: TimeInterval(s.end),
-                            text: s.text.trimmingCharacters(in: .whitespaces),
+                            text: clean,
                             speaker: nil
                         )
                     )
