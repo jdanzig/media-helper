@@ -49,6 +49,16 @@ struct YouTubeResolver: MediaResolver {
             extra: ["deviceMake": "Oculus", "deviceModel": "Quest 3",
                     "androidSdkVersion": 32, "osName": "Android", "osVersion": "12L"]
         ),
+        // MWEB — the mobile-web client. Lightweight, no PoToken in many
+        // regions. Worth trying before the heavier mobile-app clients.
+        ClientProfile(
+            name: "MWEB",
+            version: "2.20240814.07.00",
+            userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) " +
+                       "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 " +
+                       "Mobile/15E148 Safari/604.1",
+            extra: [:]
+        ),
         // ANDROID — main consumer client.
         ClientProfile(
             name: "ANDROID",
@@ -56,12 +66,22 @@ struct YouTubeResolver: MediaResolver {
             userAgent: "com.google.android.youtube/19.09.37 (Linux; U; Android 14; en_US) gzip",
             extra: ["androidSdkVersion": 34, "osName": "Android", "osVersion": "14"]
         ),
-        // TV embedded player — used to handle age-gated videos.
+        // TV embedded player — handles age-gated videos.
         ClientProfile(
             name: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
             version: "2.0",
             userAgent: "Mozilla/5.0 (PlayStation; PlayStation 4/8.03) AppleWebKit/605.1.15 " +
                        "(KHTML, like Gecko) Version/13.0 Safari/605.1.15",
+            extra: [:]
+        ),
+        // WEB_EMBEDDED_PLAYER — what `youtube.com/embed/<id>` runs.
+        // Sometimes returns playable streams when other clients are
+        // PoToken-challenged because the embed surface is more permissive.
+        ClientProfile(
+            name: "WEB_EMBEDDED_PLAYER",
+            version: "1.20240814.01.00",
+            userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 " +
+                       "(KHTML, like Gecko) Version/17.0 Safari/605.1.15",
             extra: [:]
         ),
         // IOS — historically reliable, increasingly PoToken-challenged.

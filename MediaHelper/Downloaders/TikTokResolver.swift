@@ -181,7 +181,47 @@ struct TikTokResolver: MediaResolver {
             in: html,
             pattern: "\"\(key)\":\"([^\"]+)\""
         ) else { return nil }
-        return raw.replacingOccurrences(of: "\\u0026", with: "&")
-                  .replacingOccurrences(of: "\\/", with: "/")
+        return Self.decodeJSONStringEscapes(raw)
+    }
+
+    /// Decode the subset of JSON string escapes that show up inside
+    /// TikTok's inlined player JSON. Handles `\uXXXX` generically plus
+    /// the bare `\/`, `\\`, `\"`, `\n`, `\t`, `\r` forms. We need the
+    /// generic `\u` path so reserved URL chars (`?`, `=`, `&`) which
+    /// TikTok serializes as `?`, `=`, `&` don't stay
+    /// backslash-escaped and trip URLSession's `URLError.badURL`.
+    private static func decodeJSONStringEscapes(_ s: String) -> String {
+        var out = ""
+        out.reserveCapacity(s.count)
+        var i = s.startIndex
+        while i < s.endIndex {
+            let c = s[i]
+            if c == "\\" {
+                let next = s.index(after: i)
+                guard next < s.endIndex else { out.append(c); break }
+                switch s[next] {
+                case "/":  out.append("/");  i = s.index(after: next)
+                case "\\": out.append("\\"); i = s.index(after: next)
+                case "\"": out.append("\""); i = s.index(after: next)
+                case "n":  out.append("\n"); i = s.index(after: next)
+                case "t":  out.append("\t"); i = s.index(after: next)
+                case "r":  out.append("\r"); i = s.index(after: next)
+                case "u":
+                    let hexStart = s.index(after: next)
+                    guard let hexEnd = s.index(hexStart, offsetBy: 4, limitedBy: s.endIndex),
+                          let scalar = UInt32(s[hexStart..<hexEnd], radix: 16),
+                          let unicode = Unicode.Scalar(scalar)
+                    else { out.append(c); i = s.index(after: i); continue }
+                    out.append(Character(unicode))
+                    i = hexEnd
+                default:
+                    out.append(c); i = s.index(after: i)
+                }
+            } else {
+                out.append(c)
+                i = s.index(after: i)
+            }
+        }
+        return out
     }
 }

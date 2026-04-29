@@ -133,10 +133,8 @@ struct InstagramResolver: MediaResolver {
                                   isVideo: true, platform: .instagram)
         }
 
-        // 2. Modern Reels inline the video URL inside script JSON as
-        // `"playable_url":"..."` (preferred) or
-        // `"playable_url_quality_hd":"..."`. Scan for those before
-        // giving up. Higher-quality key wins when both present.
+        // 2. Modern Reels inline the video URL inside script JSON. Try
+        // every shape we know about, in roughly preferred order.
         let inlineKeys = ["playable_url_quality_hd", "playable_url",
                           "video_url", "videoUrl", "contentUrl"]
         for key in inlineKeys {
@@ -147,8 +145,28 @@ struct InstagramResolver: MediaResolver {
             }
         }
 
-        // 3. As a last resort, hand back the still image. The app's
-        // caller can decide whether that's what the user wanted.
+        // 3. `video_versions` array. Modern shape:
+        //    "video_versions":[{"type":101,"width":720,"height":1280,
+        //    "url":"https:\/\/scontent.cdninstagram.com\/...\.mp4..."}, ...]
+        // First `"url":"…"` after the array opens is good enough.
+        if let candidate = Self.extractFirstURLAfter(
+            anchor: "\"video_versions\":[",
+            in: html
+        ), let videoURL = URL(string: candidate) {
+            return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumb,
+                                  isVideo: true, platform: .instagram)
+        }
+
+        // 4. Brute force: any `https://...mp4` URL anywhere in the HTML.
+        //    Catches future markup shifts where the key changes again.
+        if let candidate = Self.extractFirstMP4(in: html),
+           let videoURL = URL(string: candidate) {
+            return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumb,
+                                  isVideo: true, platform: .instagram)
+        }
+
+        // 5. As a last resort, hand back the still image. The app's
+        //    caller can decide whether that's what the user wanted.
         if let imageURL = thumb {
             return ResolverResult(mediaURL: imageURL, title: title, thumbnailURL: imageURL,
                                   isVideo: false, platform: .instagram)
@@ -157,6 +175,64 @@ struct InstagramResolver: MediaResolver {
         throw DownloadError.resolutionFailed(
             "post likely requires login; sign-in flow not implemented."
         )
+    }
+
+    /// Find the first `"url":"…"` value occurring after a given anchor
+    /// substring, decoding JSON escapes. Used to pluck the first entry
+    /// out of `"video_versions":[ {…"url":"…"…}, … ]`.
+    private static func extractFirstURLAfter(anchor: String, in html: String) -> String? {
+        guard let anchorRange = html.range(of: anchor) else { return nil }
+        let tail = String(html[anchorRange.upperBound...])
+        guard let value = HTMLScraper.firstCaptureGroup(
+            in: tail, pattern: "\"url\":\"([^\"]+)\""
+        ) else { return nil }
+        return decodeJSONString(value)
+    }
+
+    /// Brute-force scan for any `https://…mp4` URL in the HTML. We let
+    /// the JSON unescape pass run over the captured string in case the
+    /// match crossed an encoded slash (`\/`).
+    private static func extractFirstMP4(in html: String) -> String? {
+        guard let raw = HTMLScraper.firstCaptureGroup(
+            in: html,
+            pattern: #"(https?:[^"\\]+?\.mp4[^"\\]*)"#
+        ) else { return nil }
+        return decodeJSONString(raw)
+    }
+
+    /// Decode the subset of JSON string escapes Instagram uses:
+    /// `\uXXXX`, `\/`, `\\`, `\"`. Mirrors the helpers in
+    /// `TikTokResolver` / `FacebookResolver`.
+    private static func decodeJSONString(_ s: String) -> String {
+        var out = ""
+        out.reserveCapacity(s.count)
+        var i = s.startIndex
+        while i < s.endIndex {
+            let c = s[i]
+            if c == "\\" {
+                let next = s.index(after: i)
+                guard next < s.endIndex else { out.append(c); break }
+                switch s[next] {
+                case "/":  out.append("/");  i = s.index(after: next)
+                case "\\": out.append("\\"); i = s.index(after: next)
+                case "\"": out.append("\""); i = s.index(after: next)
+                case "u":
+                    let hexStart = s.index(after: next)
+                    guard let hexEnd = s.index(hexStart, offsetBy: 4, limitedBy: s.endIndex),
+                          let scalar = UInt32(s[hexStart..<hexEnd], radix: 16),
+                          let unicode = Unicode.Scalar(scalar)
+                    else { out.append(c); i = s.index(after: i); continue }
+                    out.append(Character(unicode))
+                    i = hexEnd
+                default:
+                    out.append(c); i = s.index(after: i)
+                }
+            } else {
+                out.append(c)
+                i = s.index(after: i)
+            }
+        }
+        return out
     }
 
     // MARK: - Parsing helpers
@@ -178,10 +254,6 @@ struct InstagramResolver: MediaResolver {
         guard let raw = HTMLScraper.firstCaptureGroup(
             in: html, pattern: "\"\(key)\":\"([^\"]+)\""
         ) else { return nil }
-        return raw
-            .replacingOccurrences(of: "\\u0026", with: "&")
-            .replacingOccurrences(of: "\\u0025", with: "%")
-            .replacingOccurrences(of: "\\u0022", with: "\"")
-            .replacingOccurrences(of: "\\/", with: "/")
+        return decodeJSONString(raw)
     }
 }
