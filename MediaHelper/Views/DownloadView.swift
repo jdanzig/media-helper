@@ -217,7 +217,7 @@ struct DownloadView: View {
     private var canStart: Bool {
         guard !vm.urlText.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
         switch vm.phase {
-        case .resolving, .downloading, .postProcessing: return false
+        case .resolving, .downloading, .postProcessing, .done: return false
         default: return vm.detectedPlatform != .unknown
         }
     }
