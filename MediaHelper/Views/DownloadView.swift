@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// UI for the Download tab. Thin: it binds to `DownloadViewModel` and
 /// reacts to published state changes. All business logic lives in the
@@ -87,6 +88,18 @@ struct DownloadView: View {
                         .frame(maxWidth: .infinity)
                     }
                     .disabled(!canStart || isWorking)
+
+                    if case .done = vm.phase {
+                        Button {
+                            UIApplication.shared.open(
+                                URL(string: "photos-library://")!
+                            )
+                        } label: {
+                            Label("Open in Photos", systemImage: "photo.on.rectangle")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
 
                     if case .done = vm.phase, let outputs = vm.outputs {
                         outputsView(outputs)

@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 /// Orchestrates the Download tab's state machine:
 ///
@@ -131,6 +132,16 @@ final class DownloadViewModel: ObservableObject {
             return
         }
 
+        // Ask for notification permission once (no-op on subsequent calls).
+        DownloadNotifier.shared.requestPermission()
+
+        // Request background execution time so the download continues if
+        // the user switches to another app. iOS typically grants ~3 minutes.
+        // The expiration handler fires if we run out of time; the download
+        // will be cut short, but there's nothing more we can do gracefully.
+        let bgTask = UIApplication.shared.beginBackgroundTask(withName: "MediaHelper.download") {}
+        defer { UIApplication.shared.endBackgroundTask(bgTask) }
+
         do {
             // 1. Resolve
             phase = .resolving
@@ -156,29 +167,25 @@ final class DownloadViewModel: ObservableObject {
             observeTask.cancel()
             progress = 1.0
 
-            // 3. Images: old behavior — save and done. No transcription
-            //    makes sense for a still image.
+            // 3. Images — save and done.
             if !result.isVideo {
                 statusMessage = "Saving to Photos…"
                 try await PhotoLibrarySaver.saveImage(at: fileURL)
                 phase = .done
                 statusMessage = "Saved to Photos."
+                DownloadNotifier.shared.notifyIfBackgrounded(title: result.title)
                 return
             }
 
-            // 4. Videos: run the transcription pipeline with whatever
-            //    options the user picked. `TranscriptionPipeline` also
-            //    handles saving the final videos to Photos.
+            // 4. Videos: run the transcription pipeline.
             let options = preset.options(withSpeakerLabels: speakerLabels)
 
-            // If the user only wants the video (no text work), the
-            // pipeline still short-circuits nicely — it'll just save
-            // the video to Photos.
             if options == .videoOnly {
                 statusMessage = "Saving to Photos…"
                 try await PhotoLibrarySaver.saveVideo(at: fileURL)
                 phase = .done
                 statusMessage = "Saved to Photos."
+                DownloadNotifier.shared.notifyIfBackgrounded(title: result.title)
                 return
             }
 
@@ -197,6 +204,7 @@ final class DownloadViewModel: ObservableObject {
             self.outputs = outputs
             phase = .done
             statusMessage = "Done. Outputs saved."
+            DownloadNotifier.shared.notifyIfBackgrounded(title: result.title)
         } catch let e as DownloadError {
             phase = .failed(e.localizedDescription)
             statusMessage = e.localizedDescription
