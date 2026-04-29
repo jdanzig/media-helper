@@ -4,17 +4,17 @@ import Foundation
 ///
 /// Facebook's web player embeds the media URL into the page HTML for
 /// logged-out visitors as long as the post is public. Our strategy
-/// mirrors the other scrape-style resolvers:
+/// mirrors the other scrape-style resolvers, with a few FB-specific tricks:
 ///
-///   1. Fetch the page (desktop UA so we get the full markup rather than
-///      the skinny mobile "log in to continue" interstitial).
-///   2. Try the standard OpenGraph tags (`og:video:secure_url` / `og:video`
-///      / `og:image`). These are populated for public Reels, fb.watch
-///      shortlinks, and most public Pages videos.
-///   3. Fall back to a regex sweep for the `hd_src` / `sd_src` keys that
-///      Facebook inlines into their bootstrap JSON for public videos.
-///   4. If we get nothing, surface a clear message: it's almost
-///      certainly a private or login-gated post.
+///   1. Fetch the canonical desktop page (richest og: tags + inlined JSON).
+///   2. Fetch the mobile page (`m.facebook.com`), which uses simpler markup.
+///   3. Try the lightweight `/video/embed?video_id=<id>` iframe page —
+///      this is what third-party embeds load, and FB keeps it scrape-
+///      friendly because it can't require login from embedding sites.
+///   4. Brute-force scan for any `.mp4` URL across all collected HTML blobs.
+///
+/// Each pass tries og:video meta, then an inline JSON key sweep, then a
+/// raw .mp4 scan. We stop as soon as we find a video.
 ///
 /// TODO: Authenticated/private content would require capturing the
 ///       user's `c_user` + `xs` cookies via an in-app WebView and
@@ -23,25 +23,27 @@ struct FacebookResolver: MediaResolver {
     let platform: SocialPlatform = .facebook
 
     func resolve(_ url: URL) async throws -> ResolverResult {
-        // Try the desktop site first (richer og: tags), then the mobile
-        // site if that fails. The desktop React shell often omits inline
-        // video URLs for logged-out viewers, while m.facebook.com still
-        // serves them in a more scrape-friendly markup.
+        // 1. Desktop UA on the canonical URL.
         if let result = try? await scrape(url, mobile: false), result.isVideo {
             return result
         }
+        // 2. Mobile UA on m.facebook.com — simpler server-side markup.
         if let mobileURL = Self.mobileVariant(of: url),
            let result = try? await scrape(mobileURL, mobile: true), result.isVideo {
             return result
         }
-
-        // Last resort — desktop again, accepting an image / image fallback
-        // if that's all there is. (Most likely path to the "couldn't find"
-        // error message.)
+        // 3. Lightweight iframe embed page. Works for fb.watch + /watch/?v=
+        //    + /username/videos/<id>/ because FB can't require auth there.
+        if let videoID = try? await Self.resolveVideoID(from: url),
+           let embedURL = URL(string: "https://www.facebook.com/video/embed?video_id=\(videoID)"),
+           let result = try? await scrape(embedURL, mobile: false), result.isVideo {
+            return result
+        }
+        // Last resort: desktop again, accepting image fallback if present.
         return try await scrape(url, mobile: false)
     }
 
-    // MARK: -
+    // MARK: - Core scrape
 
     private func scrape(_ url: URL, mobile: Bool) async throws -> ResolverResult {
         let html = try await Self.fetchHTML(url, mobile: mobile)
@@ -49,7 +51,7 @@ struct FacebookResolver: MediaResolver {
         let title = HTMLScraper.metaContent(html, property: "og:title")
         let thumb = HTMLScraper.metaContent(html, property: "og:image").flatMap(URL.init(string:))
 
-        // 1. OpenGraph video
+        // 1. OpenGraph video.
         if let videoString = HTMLScraper.metaContent(html, property: "og:video:secure_url")
             ?? HTMLScraper.metaContent(html, property: "og:video")
             ?? HTMLScraper.metaContent(html, property: "og:video:url"),
@@ -60,33 +62,36 @@ struct FacebookResolver: MediaResolver {
             )
         }
 
-        // 2. Inline-JSON sweep. FB inlines things like `"hd_src":"https:\/\/..."`
-        // for public videos; preference order: HD > SD > native > playable.
+        // 2. Inline-JSON sweep. Facebook inlines things like
+        //    `"hd_src":"https:\/\/..."` for public videos. Preference:
+        //    HD > SD > native HD/SD > playable > generic.
         let keys = [
             "hd_src", "sd_src",
             "browser_native_hd_url", "browser_native_sd_url",
             "playable_url_quality_hd", "playable_url",
-            "videoUrl", "video_url"
+            "videoUrl", "video_url",
+            "hd_src_no_ratelimit", "sd_src_no_ratelimit",
+            "dash_manifest"          // rarely a direct URL but worth a try
         ]
         for key in keys {
             if let raw = HTMLScraper.firstCaptureGroup(
                 in: html, pattern: "\"\(key)\":\"([^\"]+)\""
             ) {
                 let cleaned = Self.decodeJSONString(raw)
-                if let videoURL = URL(string: cleaned) {
-                    return ResolverResult(
-                        mediaURL: videoURL, title: title, thumbnailURL: thumb,
-                        isVideo: true, platform: .facebook
-                    )
-                }
+                // Skip manifest playlists — we only want direct .mp4 / CDN URLs.
+                guard !cleaned.contains(".mpd"), !cleaned.contains("<MPD"),
+                      let videoURL = URL(string: cleaned) else { continue }
+                return ResolverResult(
+                    mediaURL: videoURL, title: title, thumbnailURL: thumb,
+                    isVideo: true, platform: .facebook
+                )
             }
         }
 
-        // 3. Brute-force scan for any `https://…mp4` URL in the HTML —
-        // catches CDN-direct links that aren't behind a known JSON key.
+        // 3. Brute-force scan for any `https://…mp4` URL in the HTML.
         if let mp4 = HTMLScraper.firstCaptureGroup(
             in: html,
-            pattern: #"(https?://[^"\\]+\.mp4[^"\\]*)"#
+            pattern: #"(https?://[^"'<\s\\]+\.mp4[^"'<\s\\]*)"#
         ).flatMap({ URL(string: Self.decodeJSONString($0)) }) {
             return ResolverResult(
                 mediaURL: mp4, title: title, thumbnailURL: thumb,
@@ -94,10 +99,12 @@ struct FacebookResolver: MediaResolver {
             )
         }
 
-        // 4. Image fallback for FB photo posts.
+        // 4. Image fallback for photo posts (only when there's zero hint of
+        //    a video on the page).
         if let img = thumb,
            html.range(of: "og:image", options: .caseInsensitive) != nil,
-           html.range(of: "og:video", options: .caseInsensitive) == nil {
+           html.range(of: "og:video", options: .caseInsensitive) == nil,
+           html.range(of: "mp4", options: .caseInsensitive) == nil {
             return ResolverResult(
                 mediaURL: img, title: title, thumbnailURL: img,
                 isVideo: false, platform: .facebook
@@ -108,6 +115,87 @@ struct FacebookResolver: MediaResolver {
             "couldn't find a public video on that page. Private or login-gated posts aren't supported."
         )
     }
+
+    // MARK: - Video ID helpers
+
+    /// Resolve a Facebook URL to a numeric video ID. For `fb.watch` and
+    /// `/watch/?v=<id>` patterns this is trivial; for deep page URLs we
+    /// follow the redirect chain to reach the canonical form.
+    private static func resolveVideoID(from url: URL) async throws -> String {
+        // fb.watch short links redirect to the canonical /video/... URL.
+        let canonical: URL
+        if let host = url.host?.lowercased(), host.contains("fb.watch") {
+            canonical = try await Self.followRedirect(from: url)
+        } else {
+            canonical = url
+        }
+        guard let id = extractVideoID(from: canonical) else {
+            throw DownloadError.resolutionFailed("can't extract FB video ID")
+        }
+        return id
+    }
+
+    /// Extract a numeric video ID from a canonical Facebook URL:
+    ///  - `/watch/?v=<id>` or `/video.php?v=<id>`
+    ///  - `/<username>/videos/<id>/`
+    ///  - `/reel/<id>/` or `/reels/<id>/`
+    ///  - `?story_fbid=<id>` (story embeds)
+    static func extractVideoID(from url: URL) -> String? {
+        // Query param "v" — most common for /watch and /video.php URLs.
+        if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let v = comps.queryItems?.first(where: { $0.name == "v" })?.value,
+           v.allSatisfy(\.isNumber) {
+            return v
+        }
+        let parts = url.path.split(separator: "/").map(String.init)
+        // /videos/<id> or /reel/<id> or /reels/<id>
+        for (i, part) in parts.enumerated() {
+            let lower = part.lowercased()
+            if (lower == "videos" || lower == "reel" || lower == "reels"),
+               i + 1 < parts.count,
+               parts[i + 1].allSatisfy(\.isNumber) {
+                return parts[i + 1]
+            }
+        }
+        // /video/<id>/
+        if parts.first?.lowercased() == "video", parts.count >= 2,
+           parts[1].allSatisfy(\.isNumber) {
+            return parts[1]
+        }
+        return nil
+    }
+
+    /// Follow a single redirect (used for fb.watch short links).
+    /// Stops after one hop to keep things simple — fb.watch always
+    /// redirects directly to the canonical facebook.com URL.
+    private static func followRedirect(from url: URL) async throws -> URL {
+        var req = URLRequest(url: url)
+        req.httpMethod = "HEAD"
+        req.timeoutInterval = 8
+        req.setValue(desktopUserAgent, forHTTPHeaderField: "User-Agent")
+        // Disable automatic redirect following so we can read Location.
+        let delegate = NoFollowDelegate()
+        let (_, resp) = try await URLSession.shared.data(for: req, delegate: delegate)
+        if let http = resp as? HTTPURLResponse,
+           (300..<400).contains(http.statusCode),
+           let loc = http.value(forHTTPHeaderField: "Location"),
+           let next = URL(string: loc, relativeTo: url)?.absoluteURL {
+            return next
+        }
+        return url
+    }
+
+    private final class NoFollowDelegate: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession,
+                        task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+    }
+
+    // MARK: - Networking
 
     /// Fetch a Facebook page using either a desktop or a mobile UA.
     private static func fetchHTML(_ url: URL, mobile: Bool) async throws -> String {
@@ -128,8 +216,6 @@ struct FacebookResolver: MediaResolver {
     }
 
     /// Rewrite `www.facebook.com` → `m.facebook.com` for the mobile retry.
-    /// `fb.watch` short links are returned as-is; the mobile UA on those
-    /// already gets the simpler markup.
     private static func mobileVariant(of url: URL) -> URL? {
         guard var comps = URLComponents(url: url, resolvingAgainstBaseURL: true),
               let host = comps.host?.lowercased() else { return nil }
@@ -143,6 +229,8 @@ struct FacebookResolver: MediaResolver {
             return url // fb.watch / other hosts: don't rewrite, just retry with mobile UA
         }
     }
+
+    // MARK: - JSON escape decoder
 
     /// JSON string-escape decoder — `\uXXXX` plus the bare backslash
     /// forms. Same logic as TikTokResolver; kept local to avoid a
@@ -160,6 +248,9 @@ struct FacebookResolver: MediaResolver {
                 case "/":  out.append("/");  i = s.index(after: next)
                 case "\\": out.append("\\"); i = s.index(after: next)
                 case "\"": out.append("\""); i = s.index(after: next)
+                case "n":  out.append("\n"); i = s.index(after: next)
+                case "r":  out.append("\r"); i = s.index(after: next)
+                case "t":  out.append("\t"); i = s.index(after: next)
                 case "u":
                     let hexStart = s.index(after: next)
                     guard let hexEnd = s.index(hexStart, offsetBy: 4, limitedBy: s.endIndex),
@@ -178,6 +269,8 @@ struct FacebookResolver: MediaResolver {
         }
         return out
     }
+
+    // MARK: - User Agents
 
     private static let desktopUserAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 " +

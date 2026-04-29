@@ -10,12 +10,15 @@ import Foundation
 /// take the first one that returns playable streams.
 ///
 /// Order picked to maximize success rate as of 2026:
-///  1. **ANDROID_VR** — the Quest YouTube app. Largely ignored by anti-
-///     bot measures and returns progressive MP4s.
-///  2. **ANDROID** — most stable for non-age-gated content.
-///  3. **TVHTML5_SIMPLY_EMBEDDED_PLAYER** — handles age-gated and works
-///     when iOS/Android are challenged for a PoToken.
-///  4. **IOS** — kept as a final fallback. Increasingly serves 400/403
+///  1. **ANDROID_TESTSUITE** — Google's internal test harness client.
+///     Exempt from PoToken enforcement and returns progressive MP4s.
+///     This is what yt-dlp uses as its primary bypass strategy.
+///  2. **ANDROID_VR** — the Quest YouTube app. Also largely ignored by
+///     anti-bot measures and returns progressive MP4s.
+///  3. **ANDROID** — most stable for non-age-gated content.
+///  4. **TVHTML5_SIMPLY_EMBEDDED_PLAYER** — handles age-gated and works
+///     when mobile clients are challenged for a PoToken.
+///  5. **IOS** — kept as a final fallback. Increasingly serves 400/403
 ///     to clients that don't carry a freshly minted PoToken.
 ///
 /// Known limits:
@@ -40,6 +43,16 @@ struct YouTubeResolver: MediaResolver {
     }
 
     private static let clients: [ClientProfile] = [
+        // ANDROID_TESTSUITE — Google's own internal QA client. Not subject
+        // to PoToken enforcement as of 2025-2026 because Google exempts
+        // its own test infra. Returns progressive MP4s. yt-dlp uses this
+        // client as its primary evasion of the bot-challenge gate.
+        ClientProfile(
+            name: "ANDROID_TESTSUITE",
+            version: "1.9",
+            userAgent: "com.google.android.youtube/1.9 (Linux; U; Android 11) gzip",
+            extra: ["androidSdkVersion": 30, "osName": "Android", "osVersion": "11"]
+        ),
         // ANDROID_VR — quietest of the lot. Used by the Meta Quest app.
         ClientProfile(
             name: "ANDROID_VR",
