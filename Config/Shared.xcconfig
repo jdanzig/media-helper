@@ -1,0 +1,2 @@
+// Project-wide settings. Per-developer overrides live in Local.xcconfig.
+#include? "Local.xcconfig"

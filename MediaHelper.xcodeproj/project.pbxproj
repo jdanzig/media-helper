@@ -3,24 +3,27 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 71;
 	objects = {
-
-/* Begin PBXFileSystemSynchronizedRootGroup section */
-		A100000000000000000000A0 /* MediaHelper */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			explicitFileTypes = {
-			};
-			explicitFolders = (
-			);
-			path = MediaHelper;
-			sourceTree = "<group>";
-		};
-/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFileReference section */
 		A100000000000000000000B0 /* MediaHelper.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MediaHelper.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000190 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		6760EDEB2F9F787E00675445 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A100000000000000000000F0 /* MediaHelper */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		A100000000000000000000A0 /* MediaHelper */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (6760EDEB2F9F787E00675445 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = MediaHelper; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A100000000000000000000C0 /* Frameworks */ = {
@@ -36,6 +39,7 @@
 		A100000000000000000000D0 = {
 			isa = PBXGroup;
 			children = (
+				A100000000000000000001A0 /* Config */,
 				A100000000000000000000A0 /* MediaHelper */,
 				A100000000000000000000E0 /* Products */,
 			);
@@ -47,6 +51,14 @@
 				A100000000000000000000B0 /* MediaHelper.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A100000000000000000001A0 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000190 /* Shared.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -82,7 +94,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1600;
-				LastUpgradeCheck = 1600;
+				LastUpgradeCheck = 2640;
 				TargetAttributes = {
 					A100000000000000000000F0 = {
 						CreatedOnToolsVersion = 16.0;
@@ -99,7 +111,6 @@
 			);
 			mainGroup = A100000000000000000000D0;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			productRefGroup = A100000000000000000000E0 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -132,6 +143,7 @@
 /* Begin XCBuildConfiguration section */
 		A10000000000000000000150 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000190 /* Shared.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -187,6 +199,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -194,6 +207,7 @@
 		};
 		A10000000000000000000160 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000190 /* Shared.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -242,6 +256,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -298,20 +313,20 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A10000000000000000000140 /* Build configuration list for PBXProject "MediaHelper" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				A10000000000000000000150 /* Debug */,
-				A10000000000000000000160 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		A10000000000000000000100 /* Build configuration list for PBXNativeTarget "MediaHelper" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A10000000000000000000170 /* Debug */,
 				A10000000000000000000180 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000140 /* Build configuration list for PBXProject "MediaHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000150 /* Debug */,
+				A10000000000000000000160 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

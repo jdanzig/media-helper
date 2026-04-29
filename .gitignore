@@ -21,3 +21,4 @@ Pods/
 
 # Claude Code per-project cache
 .claude/
+Config/Local.xcconfig
