@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// UI for the Download tab. Thin: it binds to `DownloadViewModel` and
 /// reacts to published state changes. All business logic lives in the
@@ -10,6 +9,7 @@ struct DownloadView: View {
     @State private var shareItems: [URL] = []
     @State private var isSharePresented = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         NavigationStack {
@@ -91,9 +91,7 @@ struct DownloadView: View {
 
                     if case .done = vm.phase {
                         Button {
-                            UIApplication.shared.open(
-                                URL(string: "photos-library://")!
-                            )
+                            openURL(URL(string: "photos-library://")!)
                         } label: {
                             Label("Open in Photos", systemImage: "photo.on.rectangle")
                                 .frame(maxWidth: .infinity)
