@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// UI for the Download tab. Thin: it binds to `DownloadViewModel` and
 /// reacts to published state changes. All business logic lives in the
@@ -9,7 +10,6 @@ struct DownloadView: View {
     @State private var shareItems: [URL] = []
     @State private var isSharePresented = false
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.openURL) private var openURL
 
     var body: some View {
         NavigationStack {
@@ -26,8 +26,7 @@ struct DownloadView: View {
 
                         if !vm.urlText.isEmpty {
                             Button {
-                                vm.urlText = ""
-                                vm.urlDidChange()
+                                vm.clearURL()
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundStyle(.secondary)
@@ -91,7 +90,20 @@ struct DownloadView: View {
 
                     if case .done = vm.phase {
                         Button {
-                            openURL(URL(string: "photos-library://")!)
+                            // Use the completion-handler API — the async variant is
+                            // unreliable on iOS 17/18 for first-party app schemes.
+                            UIApplication.shared.open(
+                                URL(string: "photos-library://")!,
+                                options: [:]
+                            ) { opened in
+                                if !opened {
+                                    UIApplication.shared.open(
+                                        URL(string: "photos://")!,
+                                        options: [:],
+                                        completionHandler: nil
+                                    )
+                                }
+                            }
                         } label: {
                             Label("Open in Photos", systemImage: "photo.on.rectangle")
                                 .frame(maxWidth: .infinity)

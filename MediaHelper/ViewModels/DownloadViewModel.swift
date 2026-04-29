@@ -87,6 +87,9 @@ final class DownloadViewModel: ObservableObject {
             detectedPlatform = .unknown
             statusMessage = "Paste a link above."
             phase = .idle
+            // If the field just became empty (e.g. user tapped the inline ×),
+            // re-check the clipboard so the suggestion banner can reappear.
+            if urlText.isEmpty { checkClipboard() }
         }
     }
 
@@ -215,6 +218,19 @@ final class DownloadViewModel: ObservableObject {
             phase = .failed(error.localizedDescription)
             statusMessage = error.localizedDescription
         }
+    }
+
+    /// Clear just the URL field and reset URL-related state, then immediately
+    /// re-check the clipboard so the suggestion banner can reappear.
+    /// Unlike `reset()` this leaves download outputs (phase, resolved, outputs)
+    /// intact so the user can still share / open results after clearing the field.
+    func clearURL() {
+        urlText = ""
+        detectedPlatform = .unknown
+        statusMessage = "Paste a link above."
+        phase = .idle
+        lastOfferedClipboard = ""   // must clear so checkClipboard() isn't blocked
+        checkClipboard()
     }
 
     /// Reset back to the initial state (used by the "clear" button).
