@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// UI for the Download tab. Thin: it binds to `DownloadViewModel` and
 /// reacts to published state changes. All business logic lives in the
@@ -88,24 +87,12 @@ struct DownloadView: View {
                     }
                     .disabled(!canStart || isWorking)
 
-                    if case .done = vm.phase {
+                    if case .done = vm.phase, let fileURL = vm.downloadedFileURL {
                         Button {
-                            // Use the completion-handler API — the async variant is
-                            // unreliable on iOS 17/18 for first-party app schemes.
-                            UIApplication.shared.open(
-                                URL(string: "photos-library://")!,
-                                options: [:]
-                            ) { opened in
-                                if !opened {
-                                    UIApplication.shared.open(
-                                        URL(string: "photos://")!,
-                                        options: [:],
-                                        completionHandler: nil
-                                    )
-                                }
-                            }
+                            shareItems = [fileURL]
+                            isSharePresented = true
                         } label: {
-                            Label("Open in Photos", systemImage: "photo.on.rectangle")
+                            Label("Share / Open in Photos", systemImage: "square.and.arrow.up")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)

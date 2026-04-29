@@ -30,6 +30,9 @@ final class DownloadViewModel: ObservableObject {
     @Published private(set) var progress: Double = 0
     @Published private(set) var resolved: ResolverResult?
     @Published private(set) var outputs: TranscriptionOutputs?
+    /// Local file URL of the most recently downloaded media. Persists after
+    /// save so the share sheet can offer the file to other apps / Photos.
+    @Published private(set) var downloadedFileURL: URL?
 
     /// Non-nil when the clipboard contains a recognized social URL that
     /// the user hasn't been prompted about yet. Drives the suggestion banner.
@@ -174,6 +177,7 @@ final class DownloadViewModel: ObservableObject {
             if !result.isVideo {
                 statusMessage = "Saving to Photos…"
                 try await PhotoLibrarySaver.saveImage(at: fileURL)
+                downloadedFileURL = fileURL
                 phase = .done
                 statusMessage = "Saved to Photos."
                 DownloadNotifier.shared.notifyIfBackgrounded(title: result.title)
@@ -186,6 +190,7 @@ final class DownloadViewModel: ObservableObject {
             if options == .videoOnly {
                 statusMessage = "Saving to Photos…"
                 try await PhotoLibrarySaver.saveVideo(at: fileURL)
+                downloadedFileURL = fileURL
                 phase = .done
                 statusMessage = "Saved to Photos."
                 DownloadNotifier.shared.notifyIfBackgrounded(title: result.title)
@@ -242,6 +247,7 @@ final class DownloadViewModel: ObservableObject {
         progress = 0
         resolved = nil
         outputs = nil
+        downloadedFileURL = nil
         clipboardSuggestion = nil
         lastOfferedClipboard = ""
         // Re-check the clipboard immediately so the suggestion banner
