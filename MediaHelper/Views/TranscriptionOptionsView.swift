@@ -23,7 +23,7 @@ struct TranscriptionOptionsView: View {
     var body: some View {
         Group {
             Section("Outputs") {
-                checkRow("Video only",
+                checkRow("Original video",
                          systemImage: "video",
                          checked: selections.saveOriginalVideo) {
                     selections.saveOriginalVideo.toggle()
