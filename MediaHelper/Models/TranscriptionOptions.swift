@@ -41,33 +41,44 @@ struct TranscriptionOptions: Equatable {
     static let everything               = TranscriptionOptions(keepVideo: true, burnInSubtitles: true, translateToEnglish: true, writeTranscript: true, speakerLabels: true)
 }
 
-/// Presets that map 1:1 to the radio buttons on the Download tab.
-enum TranscriptionPreset: String, CaseIterable, Identifiable {
-    case videoOnly
-    case videoWithSubs
-    case videoWithTranslatedSubs
-    case transcriptOnly
-    case everything
+/// Multi-select output configuration for Download and Transcribe tabs.
+///
+/// `subtitles` and `transcript` are each single-value enums so that
+/// "original" and "translated" are naturally mutually exclusive within
+/// each group — tapping one automatically deselects the other.
+struct OutputSelections: Equatable {
+    /// Save the unmodified video to Photos.
+    var saveOriginalVideo: Bool = true
 
-    var id: String { rawValue }
+    /// Which subtitle variant (if any) to burn into a video copy.
+    var subtitles: SubtitleOption = .none
 
-    var title: String {
-        switch self {
-        case .videoOnly:               return "Video only"
-        case .videoWithSubs:           return "Video + subtitles"
-        case .videoWithTranslatedSubs: return "Video + translated (EN) subtitles"
-        case .transcriptOnly:          return "Transcript only"
-        case .everything:              return "Everything"
-        }
+    /// Which transcript variant (if any) to produce.
+    var transcript: TranscriptOption = .none
+
+    enum SubtitleOption: Equatable { case none, original, translated }
+    enum TranscriptOption: Equatable { case none, original, translated }
+
+    /// True when at least one output is requested.
+    var hasAnyOutput: Bool {
+        saveOriginalVideo || subtitles != .none || transcript != .none
     }
 
-    func options(withSpeakerLabels labels: Bool) -> TranscriptionOptions {
-        switch self {
-        case .videoOnly:               return .videoOnly
-        case .videoWithSubs:           var o: TranscriptionOptions = .videoWithSubs; o.speakerLabels = labels; return o
-        case .videoWithTranslatedSubs: var o: TranscriptionOptions = .videoWithTranslatedSubs; o.speakerLabels = labels; return o
-        case .transcriptOnly:          var o: TranscriptionOptions = .transcriptOnly; o.speakerLabels = labels; return o
-        case .everything:              var o: TranscriptionOptions = .everything; o.speakerLabels = labels; return o
-        }
+    /// Translation is needed when either the subtitle or transcript
+    /// variant is "translated". Note: mixing translated-subtitles with
+    /// original-transcript (or vice-versa) uses a single translation pass,
+    /// so both outputs come out in English in that edge case.
+    var needsTranslation: Bool {
+        subtitles == .translated || transcript == .translated
+    }
+
+    func toTranscriptionOptions(speakerLabels: Bool = false) -> TranscriptionOptions {
+        TranscriptionOptions(
+            keepVideo: saveOriginalVideo,
+            burnInSubtitles: subtitles != .none,
+            translateToEnglish: needsTranslation,
+            writeTranscript: transcript != .none,
+            speakerLabels: speakerLabels
+        )
     }
 }

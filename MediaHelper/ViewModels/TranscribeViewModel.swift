@@ -20,7 +20,7 @@ final class TranscribeViewModel: ObservableObject {
     @Published private(set) var pickedVideoURL: URL?
     @Published private(set) var pickedVideoName: String?
 
-    @Published var preset: TranscriptionPreset = .videoWithSubs
+    @Published var selections: OutputSelections = OutputSelections(saveOriginalVideo: false, subtitles: .original)
     @Published var backend: TranscriptionBackend = TranscriptionServiceFactory.defaultAvailableBackend()
     @Published var speakerLabels: Bool = false
 
@@ -71,7 +71,7 @@ final class TranscribeViewModel: ObservableObject {
     func start() {
         guard let videoURL = pickedVideoURL else { return }
         currentTask?.cancel()
-        let opts = preset.options(withSpeakerLabels: speakerLabels)
+        let opts = selections.toTranscriptionOptions(speakerLabels: speakerLabels)
         let backend = self.backend
 
         currentTask = Task {

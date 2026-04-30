@@ -3,12 +3,12 @@ import SwiftUI
 /// Shared UI for "which backend + which outputs" — reused by both the
 /// Download tab and the Transcribe tab so they stay in sync.
 ///
-/// The parent supplies bindings for the preset and backend choices,
+/// The parent supplies bindings for the selections and backend choices,
 /// plus a `speakerLabels` flag for AssemblyAI. Capability rules (which
 /// backends are available, which options are supported) are computed
 /// from the models.
 struct TranscriptionOptionsView: View {
-    @Binding var preset: TranscriptionPreset
+    @Binding var selections: OutputSelections
     @Binding var backend: TranscriptionBackend
     @Binding var speakerLabels: Bool
 
@@ -23,20 +23,30 @@ struct TranscriptionOptionsView: View {
     var body: some View {
         Group {
             Section("Outputs") {
-                ForEach(TranscriptionPreset.allCases) { p in
-                    Button {
-                        preset = p
-                    } label: {
-                        HStack {
-                            Image(systemName: preset == p ? "largecircle.fill.circle"
-                                                          : "circle")
-                                .foregroundStyle(.tint)
-                            Text(p.title)
-                                .foregroundStyle(.primary)
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(.plain)
+                checkRow("Video only",
+                         systemImage: "video",
+                         checked: selections.saveOriginalVideo) {
+                    selections.saveOriginalVideo.toggle()
+                }
+                checkRow("Video with subtitles",
+                         systemImage: "captions.bubble",
+                         checked: selections.subtitles == .original) {
+                    selections.subtitles = selections.subtitles == .original ? .none : .original
+                }
+                checkRow("Video with translated subtitles",
+                         systemImage: "captions.bubble.fill",
+                         checked: selections.subtitles == .translated) {
+                    selections.subtitles = selections.subtitles == .translated ? .none : .translated
+                }
+                checkRow("Transcript",
+                         systemImage: "doc.text",
+                         checked: selections.transcript == .original) {
+                    selections.transcript = selections.transcript == .original ? .none : .original
+                }
+                checkRow("Transcript with English translation",
+                         systemImage: "doc.text.fill",
+                         checked: selections.transcript == .translated) {
+                    selections.transcript = selections.transcript == .translated ? .none : .translated
                 }
             }
 
@@ -50,7 +60,7 @@ struct TranscriptionOptionsView: View {
                 }
 
                 if !backendSupportsTranslationIfNeeded {
-                    Label("This backend doesn't support translation. Pick Video + (translated) subtitles with a different backend.",
+                    Label("This backend doesn't support translation. Choose a different backend.",
                           systemImage: "exclamationmark.triangle.fill")
                         .font(.footnote)
                         .foregroundStyle(.orange)
@@ -59,7 +69,24 @@ struct TranscriptionOptionsView: View {
         }
     }
 
-    // MARK: -
+    // MARK: - Private
+
+    @ViewBuilder
+    private func checkRow(_ title: String,
+                          systemImage: String,
+                          checked: Bool,
+                          action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: checked ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(checked ? AnyShapeStyle(.tint) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
+                Label(title, systemImage: systemImage)
+                    .foregroundStyle(.primary)
+                Spacer()
+            }
+        }
+        .buttonStyle(.plain)
+    }
 
     private func backendRow(_ b: TranscriptionBackend) -> some View {
         let available = availability[b] ?? false
@@ -96,11 +123,8 @@ struct TranscriptionOptionsView: View {
         }
     }
 
-    /// True unless the user asked for translation with a backend that
-    /// can't do it. Catches the AssemblyAI + "translated subs" combo.
     private var backendSupportsTranslationIfNeeded: Bool {
-        let needsTranslation = preset == .videoWithTranslatedSubs || preset == .everything
-        if !needsTranslation { return true }
+        guard selections.needsTranslation else { return true }
         return backend.capabilities.supportsTranslationToEnglish
     }
 }

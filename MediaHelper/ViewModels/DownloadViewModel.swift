@@ -43,7 +43,7 @@ final class DownloadViewModel: ObservableObject {
     private var lastOfferedClipboard: String = ""
 
     // User-chosen post-processing options (mirrored from `TranscriptionOptionsView`).
-    @Published var preset: TranscriptionPreset = .videoOnly
+    @Published var selections: OutputSelections = OutputSelections()
     @Published var backend: TranscriptionBackend = TranscriptionServiceFactory.defaultAvailableBackend()
     @Published var speakerLabels: Bool = false
 
@@ -185,9 +185,9 @@ final class DownloadViewModel: ObservableObject {
             }
 
             // 4. Videos: run the transcription pipeline.
-            let options = preset.options(withSpeakerLabels: speakerLabels)
+            let options = selections.toTranscriptionOptions(speakerLabels: speakerLabels)
 
-            if options == .videoOnly {
+            if !options.needsTranscription {
                 statusMessage = "Saving to Photos…"
                 try await PhotoLibrarySaver.saveVideo(at: fileURL)
                 downloadedFileURL = fileURL
@@ -248,6 +248,7 @@ final class DownloadViewModel: ObservableObject {
         resolved = nil
         outputs = nil
         downloadedFileURL = nil
+        selections = OutputSelections()
         clipboardSuggestion = nil
         lastOfferedClipboard = ""
         // Re-check the clipboard immediately so the suggestion banner

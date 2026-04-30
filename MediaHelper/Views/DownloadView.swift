@@ -43,7 +43,7 @@ struct DownloadView: View {
                 }
 
                 TranscriptionOptionsView(
-                    preset: $vm.preset,
+                    selections: $vm.selections,
                     backend: $vm.backend,
                     speakerLabels: $vm.speakerLabels
                 )
