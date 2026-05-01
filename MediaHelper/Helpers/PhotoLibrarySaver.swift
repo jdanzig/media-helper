@@ -31,7 +31,10 @@ enum PhotoLibrarySaver {
         }
 
         try await PHPhotoLibrary.shared().performChanges {
-            PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: fileURL)
+            let request = PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: fileURL)
+            // Override the file's embedded creation date so the asset appears
+            // under "today" in Photos rather than whenever the video was filmed.
+            request?.creationDate = Date()
         }
     }
 
