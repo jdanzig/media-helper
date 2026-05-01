@@ -44,10 +44,9 @@ final class WhisperKitTranscriber: TranscriptionService {
 
         let decodeOptions = DecodingOptions(
             task: options.translateToEnglish ? .translate : .transcribe,
-            // WhisperKit's default is solid for general speech; leave
-            // language auto-detect on unless translating.
             language: nil,
             usePrefillPrompt: true,
+            beamSize: 5,        // beam search vs greedy — same model, better accuracy
             withoutTimestamps: false
         )
 
