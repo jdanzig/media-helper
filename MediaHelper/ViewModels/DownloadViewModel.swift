@@ -259,21 +259,15 @@ final class DownloadViewModel: ObservableObject {
 
     // MARK: - Private helpers
 
-    /// Copy `url` into the app's Caches directory so `UIActivityViewController`
-    /// always gets a stable, process-accessible path. The temp directory can be
-    /// inaccessible to share-sheet extensions, causing a blank sheet on first
-    /// presentation. Overwrites any previous share copy; falls back to the
-    /// original URL if the copy fails.
+    /// Copies `url` to Caches for reliable share-sheet access.
+    /// Temp-dir URLs can be inaccessible to share-sheet extensions.
+    /// Falls back to the original URL if the copy fails.
     private func makeShareCopy(of url: URL) -> URL {
         guard let caches = FileManager.default
                 .urls(for: .cachesDirectory, in: .userDomainMask).first else { return url }
         let dest = caches.appendingPathComponent("MediaHelper_share.\(url.pathExtension)")
         try? FileManager.default.removeItem(at: dest)
-        do {
-            try FileManager.default.copyItem(at: url, to: dest)
-            return dest
-        } catch {
-            return url
-        }
+        try? FileManager.default.copyItem(at: url, to: dest)
+        return FileManager.default.fileExists(atPath: dest.path) ? dest : url
     }
 }
