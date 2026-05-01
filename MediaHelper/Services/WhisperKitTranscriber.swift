@@ -46,7 +46,6 @@ final class WhisperKitTranscriber: TranscriptionService {
             task: options.translateToEnglish ? .translate : .transcribe,
             language: nil,
             usePrefillPrompt: true,
-            beamSize: 5,        // beam search vs greedy — same model, better accuracy
             withoutTimestamps: false
         )
 
@@ -72,9 +71,9 @@ final class WhisperKitTranscriber: TranscriptionService {
                     // <|startoftranscript|>, <|en|>, <|3.68|> etc. in the
                     // raw segment text. Strip them before storing.
                     let clean = s.text
-                        .replacingOccurrences(of: #"<\|[^|]*\|>"#,
+                        .replacingOccurrences(of: "<\\|[^|]*\\|>",
                                               with: "",
-                                              options: .regularExpression)
+                                              options: NSString.CompareOptions.regularExpression)
                         .trimmingCharacters(in: .whitespaces)
                     guard !clean.isEmpty else { continue }
                     flatSegments.append(
