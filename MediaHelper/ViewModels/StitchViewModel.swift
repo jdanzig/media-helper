@@ -13,6 +13,9 @@ final class StitchViewModel: ObservableObject {
     @Published var axis: StitchAxis = .vertical {
         didSet { render() }
     }
+    @Published var showDivider: Bool = false {
+        didSet { render() }
+    }
     @Published private(set) var output: UIImage?
     @Published private(set) var status: String = "Pick images to stitch."
     @Published var isSaving = false
@@ -43,7 +46,7 @@ final class StitchViewModel: ObservableObject {
         guard !images.isEmpty else { output = nil; return }
         status = "Rendering…"
         Task.detached(priority: .userInitiated) { [images, axis] in
-            let out = ImageStitcher.stitch(images, axis: axis)
+            let out = ImageStitcher.stitch(images, axis: axis, divider: showDivider)
             await MainActor.run {
                 self.output = out
                 self.status = out == nil

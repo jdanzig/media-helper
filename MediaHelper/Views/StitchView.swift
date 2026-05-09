@@ -35,8 +35,12 @@ struct StitchView: View {
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
 
-                // Preview: scrollable so tall vertical stitches aren't clipped.
-                ScrollView([.vertical, .horizontal]) {
+                Toggle("Divider line between images", isOn: $vm.showDivider)
+                    .padding(.horizontal)
+
+                // Preview: vertical scroll only so the image always scales to
+                // fit the available width (horizontal ScrollView caused clipping).
+                ScrollView(.vertical) {
                     if let out = vm.output {
                         Image(uiImage: out)
                             .resizable()
