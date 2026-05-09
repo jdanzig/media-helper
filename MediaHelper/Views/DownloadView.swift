@@ -148,8 +148,7 @@ struct DownloadView: View {
             }
             Spacer()
             Button {
-                vm.urlText = suggestion.url
-                vm.urlDidChange()
+                vm.acceptClipboardSuggestion()
             } label: {
                 Text("Paste")
                     .font(.subheadline.bold())

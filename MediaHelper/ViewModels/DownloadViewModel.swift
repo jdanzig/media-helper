@@ -121,6 +121,17 @@ final class DownloadViewModel: ObservableObject {
         clipboardSuggestion = (url: url.absoluteString, platform: platform)
     }
 
+    /// Accept the clipboard suggestion: paste the cleaned URL into the field,
+    /// write it back to the clipboard (the original clipboard content is still
+    /// the dirty tracking URL at this point), then run the normal URL-changed
+    /// pipeline.
+    func acceptClipboardSuggestion() {
+        guard let suggestion = clipboardSuggestion else { return }
+        urlText = suggestion.url
+        UIPasteboard.general.string = suggestion.url
+        urlDidChange()
+    }
+
     /// Dismiss the clipboard suggestion without pasting (e.g. user taps ✕).
     func dismissClipboardSuggestion() {
         clipboardSuggestion = nil
