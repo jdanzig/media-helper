@@ -72,8 +72,13 @@ final class DownloadViewModel: ObservableObject {
         if let url = SocialURLParser.url(from: urlText) {
             // Strip tracking params and reflect the clean URL back to the
             // text field. Guard against equality so we don't recurse.
+            // Also write it back to the clipboard so the clean URL is what
+            // gets shared if the user copies it from somewhere else.
             let cleaned = url.absoluteString
-            if cleaned != urlText { urlText = cleaned }
+            if cleaned != urlText {
+                urlText = cleaned
+                UIPasteboard.general.string = cleaned
+            }
 
             // Hide the clipboard suggestion once the user has something in the field.
             clipboardSuggestion = nil
