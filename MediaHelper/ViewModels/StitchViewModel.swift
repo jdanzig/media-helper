@@ -45,7 +45,7 @@ final class StitchViewModel: ObservableObject {
     private func render() {
         guard !images.isEmpty else { output = nil; return }
         status = "Rendering…"
-        Task.detached(priority: .userInitiated) { [images, axis] in
+        Task.detached(priority: .userInitiated) { [images, axis, showDivider] in
             let out = ImageStitcher.stitch(images, axis: axis, divider: showDivider)
             await MainActor.run {
                 self.output = out
