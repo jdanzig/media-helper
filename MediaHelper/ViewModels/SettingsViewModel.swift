@@ -13,7 +13,9 @@ final class SettingsViewModel: ObservableObject {
     @Published private(set) var hasOpenAIKey: Bool = false
     @Published private(set) var hasAssemblyAIKey: Bool = false
 
-    init() { reload() }
+    init() {
+        // Values are loaded in SettingsView's .onAppear — nothing blocking here.
+    }
 
     /// Re-read presence of each key from the keychain. Call when returning
     /// to this view in case something changed elsewhere.
