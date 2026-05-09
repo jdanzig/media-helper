@@ -38,24 +38,20 @@ struct StitchView: View {
                 Toggle("Divider line between images", isOn: $vm.showDivider)
                     .padding(.horizontal)
 
-                // Preview: vertical scroll only so the image always scales to
-                // fit the available width (horizontal ScrollView caused clipping).
-                ScrollView(.vertical) {
+                // Preview fills remaining vertical space. ZoomableImageView
+                // starts at aspect-fit scale; pinch to zoom, one finger to pan.
+                Group {
                     if let out = vm.output {
-                        Image(uiImage: out)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: .infinity)
-                            .padding()
+                        ZoomableImageView(image: out)
                     } else {
                         ContentUnavailableView(
                             "No preview",
                             systemImage: "rectangle.on.rectangle",
                             description: Text("Pick two or more images to see a preview.")
                         )
-                        .frame(maxWidth: .infinity, minHeight: 200)
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(.secondarySystemBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .padding(.horizontal)
@@ -75,10 +71,8 @@ struct StitchView: View {
                 .padding(.horizontal)
                 .padding(.bottom)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("Stitch")
-            // Same drift issue as SquarifyView: nested ScrollView in a
-            // VStack root makes the large title untether from the bar
-            // when the user drags. Inline mode pins it.
             .navigationBarTitleDisplayMode(.inline)
         }
     }
