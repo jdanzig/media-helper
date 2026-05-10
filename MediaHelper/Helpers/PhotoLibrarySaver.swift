@@ -51,9 +51,30 @@ enum PhotoLibrarySaver {
     }
 
     /// Save an image that's already on disk (matches how downloads arrive).
+    ///
+    /// Prefers adding the file resource directly (same path as `saveVideo`) so
+    /// that original format, quality, and EXIF are preserved. Falls back to a
+    /// UIImage round-trip if Photos rejects the raw file (e.g. a format Photos
+    /// doesn't recognise, which UIImage can still decode and re-encode to JPEG).
     static func saveImage(at fileURL: URL) async throws {
+        guard await requestAddOnlyAccess() else {
+            throw DownloadError.saveFailed("Photos access was denied.")
+        }
+
+        // Attempt 1: add the file directly — preserves original data.
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                let req = PHAssetCreationRequest.forAsset()
+                req.addResource(with: .photo, fileURL: fileURL, options: nil)
+            }
+            return
+        } catch { /* fall through to UIImage path */ }
+
+        // Attempt 2: decode → UIImage → JPEG in Photos.
+        // Handles CDN image formats (WebP, AVIF, …) that Photos won't ingest
+        // raw but UIImage can decode, and catches colour-space issues too.
         guard let image = UIImage(contentsOfFile: fileURL.path) else {
-            throw DownloadError.saveFailed("Downloaded file wasn't a readable image.")
+            throw DownloadError.saveFailed("Downloaded file isn't a readable image.")
         }
         try await saveImage(image)
     }
