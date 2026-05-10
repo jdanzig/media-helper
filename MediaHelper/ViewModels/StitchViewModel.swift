@@ -10,6 +10,10 @@ final class StitchViewModel: ObservableObject {
         didSet { Task { await loadImages() } }
     }
     @Published private(set) var images: [UIImage] = []
+    /// Stable per-image UUIDs that survive reordering, giving SwiftUI's
+    /// ForEach a consistent identity so thumbnails animate as moves, not
+    /// insert/delete pairs.
+    @Published private(set) var imageIDs: [UUID] = []
     @Published var axis: StitchAxis = .vertical {
         didSet { render() }
     }
@@ -38,7 +42,8 @@ final class StitchViewModel: ObservableObject {
                 loaded.append(img)
             }
         }
-        images = loaded
+        images   = loaded
+        imageIDs = loaded.map { _ in UUID() }
         render()
     }
 
@@ -54,6 +59,14 @@ final class StitchViewModel: ObservableObject {
                     : "\(images.count) images • \(axis.label)."
             }
         }
+    }
+
+    /// Move a thumbnail from one position to another (drag-to-reorder).
+    /// Called by the drop delegate in StitchView.
+    func moveImage(from source: IndexSet, to destination: Int) {
+        images.move(fromOffsets: source, toOffset: destination)
+        imageIDs.move(fromOffsets: source, toOffset: destination)
+        render()
     }
 
     /// Reset to the initial empty state.
