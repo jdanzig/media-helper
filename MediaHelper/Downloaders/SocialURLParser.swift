@@ -29,12 +29,32 @@ struct SocialURLParser {
     ///    (`s`, `t`, `ref_src`, …).
     ///  - **Facebook /watch/?v=**: keep `v`; strip everything else (`ref`, …).
     ///    For all other FB paths the video ID is in the path — strip all.
+    ///  - **Threads**: `@username` in the path confuses `URLComponents(url:)`
+    ///    — it can misparse `@` as a userinfo separator and corrupt the host.
+    ///    Build components from the URL's already-parsed properties instead.
     ///  - **Unknown / short-links** (fb.watch, youtu.be, t.co, vm.tiktok.com):
     ///    strip all query params; the meaningful part is the path.
     static func stripTrackingParams(_ url: URL) -> URL {
-        guard var comps = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
-            return url
+        // IMPORTANT: Do NOT use `URLComponents(url:)` here. For URLs whose
+        // path contains `@` (e.g. Threads: `/@username/post/ID`), the RFC 3986
+        // authority parser can misinterpret `@` as a userinfo separator and
+        // set `host` to the substring after `@`, corrupting the reconstructed
+        // URL. Instead, build URLComponents manually from URL's already-parsed
+        // properties, which are always correct.
+        var comps = URLComponents()
+        comps.scheme   = url.scheme
+        comps.user     = url.user
+        comps.password = url.password
+        comps.host     = url.host
+        comps.port     = url.port
+        comps.path     = url.path
+        comps.fragment = url.fragment
+        // Parse the existing query string into items so we can selectively
+        // preserve them for platforms that need a query parameter (e.g. YouTube ?v=).
+        let existingItems = url.query.flatMap {
+            URLComponents(string: "?\($0)")?.queryItems
         }
+
         let platform = detectPlatform(url)
         switch platform {
         case .youtube:
@@ -43,28 +63,21 @@ struct SocialURLParser {
             if isShortLink {
                 comps.queryItems = nil
             } else {
-                let v = comps.queryItems?.first(where: { $0.name == "v" })
+                let v = existingItems?.first(where: { $0.name == "v" })
                 comps.queryItems = v.map { [$0] }
             }
-        case .twitter:
-            comps.queryItems = nil
-        case .tiktok:
-            comps.queryItems = nil
-        case .instagram:
-            comps.queryItems = nil
-        case .threads:
-            comps.queryItems = nil
         case .facebook:
             // /watch/?v=<id> — keep only v; all other paths have ID in path.
             let pathIsWatch = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                                       .lowercased() == "watch"
             if pathIsWatch {
-                let v = comps.queryItems?.first(where: { $0.name == "v" })
+                let v = existingItems?.first(where: { $0.name == "v" })
                 comps.queryItems = v.map { [$0] }
             } else {
                 comps.queryItems = nil
             }
-        case .unknown:
+        default:
+            // Twitter, TikTok, Instagram, Threads, unknown — strip all params.
             comps.queryItems = nil
         }
         return comps.url ?? url
