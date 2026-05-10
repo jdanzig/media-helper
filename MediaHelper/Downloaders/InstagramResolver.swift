@@ -57,6 +57,22 @@ struct InstagramResolver: MediaResolver {
         return first == "reel" || first == "reels" || first == "tv"
     }
 
+    // MARK: - Public resolution entry points
+
+    /// Resolve all media in the post. For carousel/album posts (`/p/`) this
+    /// returns every image and video in the sidecar; for single-item posts it
+    /// returns a one-element array. Falls back to `resolve()` if the
+    /// carousel-aware GraphQL path fails.
+    func resolveAll(_ url: URL) async throws -> [ResolverResult] {
+        if let sc = Self.extractShortcode(from: url),
+           let results = try? await resolveAllViaGraphQL(shortcode: sc),
+           !results.isEmpty {
+            return results
+        }
+        // Single-item fallback (also handles Reels / IGTV).
+        return [try await resolve(url)]
+    }
+
     func resolve(_ url: URL) async throws -> ResolverResult {
         let pathIsVideo = Self.pathImpliesVideo(url)
         let shortcode = Self.extractShortcode(from: url)
@@ -108,20 +124,22 @@ struct InstagramResolver: MediaResolver {
 
     // MARK: - GraphQL API (pass 1)
 
-    /// POST to Instagram's private GraphQL gateway with a known doc_id.
-    /// Returns `xdt_shortcode_media` JSON for public posts without a
-    /// session cookie. No login required.
+    /// POST to Instagram's private GraphQL gateway and return the raw
+    /// `xdt_shortcode_media` dictionary. Both single-item and carousel-aware
+    /// callers share this network path to avoid duplicating request logic.
     ///
     /// Response shape (simplified):
     /// ```json
     /// { "data": { "xdt_shortcode_media": {
+    ///     "__typename": "XDTGraphSidecar" | "XDTGraphImage" | "XDTGraphVideo",
     ///     "is_video": true,
     ///     "video_url": "https://…cdn….mp4",
     ///     "display_url": "https://…cdn….jpg",
-    ///     "owner": { "username": "…" }
+    ///     "owner": { "username": "…" },
+    ///     "edge_sidecar_to_children": { "edges": [ { "node": {…} }, … ] }
     /// }}}
     /// ```
-    private func resolveViaGraphQL(shortcode: String) async throws -> ResolverResult {
+    private func fetchGraphQLMedia(shortcode: String) async throws -> [String: Any] {
         guard let endpoint = URL(string: "https://www.instagram.com/api/graphql") else {
             throw DownloadError.resolutionFailed("couldn't build GraphQL URL.")
         }
@@ -132,8 +150,8 @@ struct InstagramResolver: MediaResolver {
         // application/x-www-form-urlencoded, not application/json.
         var bodyComps = URLComponents()
         bodyComps.queryItems = [
-            URLQueryItem(name: "doc_id",   value: Self.graphqlDocID),
-            URLQueryItem(name: "lsd",      value: Self.lsdToken),
+            URLQueryItem(name: "doc_id",    value: Self.graphqlDocID),
+            URLQueryItem(name: "lsd",       value: Self.lsdToken),
             URLQueryItem(name: "variables", value: variables)
         ]
         guard let body = bodyComps.percentEncodedQuery?.data(using: .utf8) else {
@@ -152,7 +170,7 @@ struct InstagramResolver: MediaResolver {
         req.setValue("same-origin",                        forHTTPHeaderField: "Sec-Fetch-Site")
         req.setValue("https://www.instagram.com",          forHTTPHeaderField: "Origin")
         req.setValue("https://www.instagram.com/",         forHTTPHeaderField: "Referer")
-        req.setValue("en-US,en;q=0.9",                    forHTTPHeaderField: "Accept-Language")
+        req.setValue("en-US,en;q=0.9",                     forHTTPHeaderField: "Accept-Language")
 
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -161,29 +179,79 @@ struct InstagramResolver: MediaResolver {
             )
         }
 
-        guard let json     = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let jsonData  = json["data"]                    as? [String: Any],
-              let media     = jsonData["xdt_shortcode_media"] as? [String: Any] else {
+        guard let json    = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let jsonData = json["data"]                    as? [String: Any],
+              let media    = jsonData["xdt_shortcode_media"] as? [String: Any] else {
             throw DownloadError.resolutionFailed("GraphQL: unexpected response shape.")
         }
+        return media
+    }
 
+    /// Carousel-aware resolver. Returns all images/videos in a sidecar post,
+    /// or a single-element array for plain photo/video posts.
+    private func resolveAllViaGraphQL(shortcode: String) async throws -> [ResolverResult] {
+        let media    = try await fetchGraphQLMedia(shortcode: shortcode)
+        let username = (media["owner"] as? [String: Any])?["username"] as? String
+        let title    = username.map { "@\($0)" }
+
+        // Carousel/sidecar post — extract every child node.
+        if let sidecar = media["edge_sidecar_to_children"] as? [String: Any],
+           let edges   = sidecar["edges"]                  as? [[String: Any]] {
+            var results: [ResolverResult] = []
+            for edge in edges {
+                guard let node = edge["node"] as? [String: Any] else { continue }
+                let isVideo  = node["is_video"] as? Bool ?? false
+                let thumbURL = (node["display_url"] as? String).flatMap(URL.init(string:))
+                if isVideo,
+                   let urlStr   = node["video_url"] as? String,
+                   let videoURL = URL(string: urlStr) {
+                    results.append(ResolverResult(mediaURL: videoURL, title: title,
+                                                  thumbnailURL: thumbURL,
+                                                  isVideo: true, platform: .instagram))
+                } else if let imageURL = thumbURL {
+                    results.append(ResolverResult(mediaURL: imageURL, title: title,
+                                                  thumbnailURL: imageURL,
+                                                  isVideo: false, platform: .instagram))
+                }
+            }
+            if !results.isEmpty { return results }
+        }
+
+        // Single image or video.
+        let thumbURL = (media["display_url"] as? String).flatMap(URL.init(string:))
+        let isVideo  = media["is_video"] as? Bool ?? false
+        if isVideo,
+           let urlStr   = media["video_url"] as? String,
+           let videoURL = URL(string: urlStr) {
+            return [ResolverResult(mediaURL: videoURL, title: title,
+                                   thumbnailURL: thumbURL, isVideo: true, platform: .instagram)]
+        }
+        if let imageURL = thumbURL {
+            return [ResolverResult(mediaURL: imageURL, title: title,
+                                   thumbnailURL: imageURL, isVideo: false, platform: .instagram)]
+        }
+        throw DownloadError.resolutionFailed("GraphQL: media found but no URL extracted.")
+    }
+
+    /// Single-item resolver (used by `resolve()`). Delegates to
+    /// `fetchGraphQLMedia` and returns the first / only result.
+    private func resolveViaGraphQL(shortcode: String) async throws -> ResolverResult {
+        let media    = try await fetchGraphQLMedia(shortcode: shortcode)
         let username = (media["owner"] as? [String: Any])?["username"] as? String
         let title    = username.map { "@\($0)" }
         let thumbURL = (media["display_url"] as? String).flatMap(URL.init(string:))
         let isVideo  = media["is_video"] as? Bool ?? false
 
         if isVideo,
-           let urlString = media["video_url"] as? String,
-           let videoURL  = URL(string: urlString) {
+           let urlStr   = media["video_url"] as? String,
+           let videoURL = URL(string: urlStr) {
             return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumbURL,
                                   isVideo: true, platform: .instagram)
         }
-
         if let imageURL = thumbURL {
             return ResolverResult(mediaURL: imageURL, title: title, thumbnailURL: imageURL,
                                   isVideo: false, platform: .instagram)
         }
-
         throw DownloadError.resolutionFailed("GraphQL: media found but no URL extracted.")
     }
 
