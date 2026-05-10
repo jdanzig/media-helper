@@ -34,19 +34,27 @@ import Foundation
 struct ThreadsResolver: MediaResolver {
     let platform: SocialPlatform = .threads
 
-    private static let userAgent =
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 " +
-        "(KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+    /// User agents tried in order. Googlebot is listed first because Meta
+    /// whitelists it for SEO and will serve a full server-rendered page rather
+    /// than a JS shell or a 403. Chrome is a realistic fallback.
+    private static let userAgents: [String] = [
+        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 " +
+            "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    ]
 
     func resolve(_ url: URL) async throws -> ResolverResult {
-        // Always fetch from threads.net — threads.com may be client-side only
-        // and not embed media data in the initial HTML response.
         let netURL = Self.toThreadsNet(url)
+        let comURL = Self.toThreadsCom(url)
 
-        // 1. Main page (threads.net).
-        if let result = try? await resolveViaPage(netURL) { return result }
+        // Try threads.net first (SSR page embeds React state with media data),
+        // then threads.com (in case .net 403s), then the embed page.
+        for candidate in [netURL, comURL] {
+            if let result = try? await resolveViaPage(candidate) { return result }
+        }
 
-        // 2. Embed page.
         if let sc = Self.extractShortcode(from: url),
            let result = try? await resolveViaEmbed(shortcode: sc) { return result }
 
@@ -196,32 +204,57 @@ struct ThreadsResolver: MediaResolver {
 
     // MARK: - Helpers
 
-    /// Rewrite a threads.com URL to its threads.net equivalent.
-    /// threads.com may render client-side only (no media data in initial HTML);
-    /// threads.net SSR-renders the React state blob that contains media URLs.
     private static func toThreadsNet(_ url: URL) -> URL {
         let s = url.absoluteString
-        guard s.contains("threads.com") else { return url }
+        if s.contains("threads.net") { return url }
         return URL(string: s.replacingOccurrences(of: "threads.com", with: "threads.net")) ?? url
     }
 
-    private static func fetchHTML(_ url: URL) async throws -> String {
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 15
-        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        req.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+    private static func toThreadsCom(_ url: URL) -> URL {
+        let s = url.absoluteString
+        if s.contains("threads.com") { return url }
+        return URL(string: s.replacingOccurrences(of: "threads.net", with: "threads.com")) ?? url
+    }
 
-        let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse,
-              (200..<400).contains(http.statusCode) else {
-            throw DownloadError.networkFailed(
-                "Threads HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"
+    /// Fetch `url` trying each user agent in turn until one returns a 2xx/3xx.
+    /// Threads (and Instagram's infrastructure) blocks minimal header sets with
+    /// 403; a Googlebot UA is whitelisted for SEO, and a Chrome UA is a
+    /// realistic fallback. Full Accept / browser headers are sent every time.
+    private static func fetchHTML(_ url: URL) async throws -> String {
+        var lastError: Error = DownloadError.networkFailed("no user agent succeeded")
+
+        for ua in userAgents {
+            var req = URLRequest(url: url)
+            req.timeoutInterval = 15
+            req.setValue(ua, forHTTPHeaderField: "User-Agent")
+            req.setValue(
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                forHTTPHeaderField: "Accept"
             )
+            req.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+            req.setValue("1", forHTTPHeaderField: "Upgrade-Insecure-Requests")
+            req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
+            do {
+                let (data, response) = try await URLSession.shared.data(for: req)
+                guard let http = response as? HTTPURLResponse else { continue }
+                guard (200..<400).contains(http.statusCode) else {
+                    lastError = DownloadError.networkFailed("Threads HTTP \(http.statusCode)")
+                    continue  // try next user agent
+                }
+                guard let html = String(data: data, encoding: .utf8) else {
+                    throw DownloadError.resolutionFailed("non-UTF8 response.")
+                }
+                return html
+            } catch let e as DownloadError {
+                throw e   // propagate non-HTTP errors immediately
+            } catch {
+                lastError = error
+                continue
+            }
         }
-        guard let html = String(data: data, encoding: .utf8) else {
-            throw DownloadError.resolutionFailed("non-UTF8 response.")
-        }
-        return html
+
+        throw lastError
     }
 
     /// Extract the post shortcode from a Threads URL.
