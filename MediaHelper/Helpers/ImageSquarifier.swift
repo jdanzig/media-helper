@@ -36,8 +36,11 @@ enum ImageSquarifier {
     /// This naturally box-filters the corner, which is both fast and
     /// matches what the eye expects for solid-color borders.
     ///
+    /// Exposed (internal) so `SquarifyViewModel` can use the same colour for
+    /// the live interactive canvas background without a full squarify pass.
+    ///
     /// For a strict top-left pixel read, switch to CGImage + CFData below.
-    private static func topLeftPixelColor(of image: UIImage) -> UIColor? {
+    static func topLeftPixelColor(of image: UIImage) -> UIColor? {
         guard let cg = image.cgImage else { return nil }
 
         var pixel: [UInt8] = [0, 0, 0, 0]
