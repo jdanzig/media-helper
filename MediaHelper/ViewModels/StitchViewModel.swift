@@ -56,6 +56,11 @@ final class StitchViewModel: ObservableObject {
         }
     }
 
+    /// Reset to the initial empty state.
+    func clear() {
+        pickerItems = []   // triggers loadImages() → resets images, output & status
+    }
+
     func save() async {
         guard let output else { return }
         isSaving = true

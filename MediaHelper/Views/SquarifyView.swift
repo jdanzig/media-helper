@@ -24,13 +24,21 @@ struct SquarifyView: View {
     // Actual display width of the square canvas, captured at layout time.
     @State private var canvasSize: CGFloat = 300
 
-    // Combined live transforms.
-    private var totalScale: CGFloat {
-        confirmedScale * gestureScale
-    }
-    private var totalOffset: CGSize {
+    // Combined live transforms (unclamped).
+    private var totalScale:  CGFloat { confirmedScale * gestureScale }
+    private var totalOffset: CGSize  {
         CGSize(width:  confirmedOffset.width  + gestureOffset.width,
                height: confirmedOffset.height + gestureOffset.height)
+    }
+
+    /// Pan extent clamped so the image always covers the canvas.
+    ///
+    /// At default zoom (image fits inside canvas) → max offset = 0, no panning.
+    /// Zoomed in beyond the canvas → panning is allowed up to the point where
+    /// the image edge aligns with the canvas edge.
+    private var displayOffset: CGSize {
+        guard let source = vm.source else { return .zero }
+        return clampOffset(totalOffset, source: source, scale: totalScale)
     }
 
     var body: some View {
@@ -74,22 +82,34 @@ struct SquarifyView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
 
-                // MARK: Save button
-                Button {
-                    Task {
-                        await vm.save(scale:      totalScale,
-                                      offset:     totalOffset,
-                                      canvasSize: canvasSize)
+                // MARK: Clear + Save buttons
+                HStack(spacing: 12) {
+                    Button("Clear", role: .destructive) {
+                        vm.clear()
+                        confirmedScale  = 1.0
+                        confirmedOffset = .zero
                     }
-                } label: {
-                    if vm.isSaving {
-                        ProgressView()
-                    } else {
-                        Label("Save to Photos", systemImage: "square.and.arrow.down")
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity)
+                    .disabled(vm.source == nil)
+
+                    Button {
+                        Task {
+                            await vm.save(scale:      totalScale,
+                                          offset:     displayOffset,
+                                          canvasSize: canvasSize)
+                        }
+                    } label: {
+                        if vm.isSaving {
+                            ProgressView()
+                        } else {
+                            Label("Save to Photos", systemImage: "square.and.arrow.down")
+                        }
                     }
+                    .buttonStyle(.borderedProminent)
+                    .frame(maxWidth: .infinity)
+                    .disabled(vm.source == nil || vm.isSaving)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(vm.source == nil || vm.isSaving)
                 .padding(.horizontal)
                 .padding(.bottom)
             }
@@ -117,8 +137,11 @@ struct SquarifyView: View {
                 Image(uiImage: source)
                     .resizable()
                     .scaledToFit()
+                    // Fill the full canvas frame so .scaleEffect pivots
+                    // around the canvas centre, not the image's own centre.
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .scaleEffect(totalScale)
-                    .offset(totalOffset)
+                    .offset(displayOffset)
             } else {
                 ContentUnavailableView(
                     "No image",
@@ -142,14 +165,21 @@ struct SquarifyView: View {
         // Pinch to zoom + drag to reposition, simultaneously.
         // @GestureState means the in-progress deltas reset to identity when
         // each gesture ends; the .onEnded handlers fold them into the
-        // confirmed values.
+        // confirmed values (with clamping applied).
         .gesture(
             MagnificationGesture()
                 .updating($gestureScale) { value, state, _ in
                     state = value
                 }
                 .onEnded { value in
-                    confirmedScale = max(0.1, confirmedScale * value)
+                    let newScale = max(0.1, confirmedScale * value)
+                    confirmedScale = newScale
+                    // Re-clamp offset for the new (possibly smaller) scale.
+                    if let source = vm.source {
+                        confirmedOffset = clampOffset(confirmedOffset,
+                                                      source: source,
+                                                      scale: newScale)
+                    }
                 }
                 .simultaneously(with:
                     DragGesture()
@@ -157,12 +187,44 @@ struct SquarifyView: View {
                             state = value.translation
                         }
                         .onEnded { value in
-                            confirmedOffset = CGSize(
+                            let raw = CGSize(
                                 width:  confirmedOffset.width  + value.translation.width,
                                 height: confirmedOffset.height + value.translation.height
                             )
+                            if let source = vm.source {
+                                confirmedOffset = clampOffset(raw,
+                                                              source: source,
+                                                              scale: confirmedScale)
+                            } else {
+                                confirmedOffset = raw
+                            }
                         }
                 )
+        )
+    }
+
+    // MARK: - Offset clamping
+
+    /// Returns `offset` clamped so the image (at `scale`) never leaves a gap
+    /// between its edge and the canvas edge.
+    ///
+    /// When the image fits entirely inside the canvas (default zoom), the
+    /// allowed range is exactly zero — the image stays centred and cannot be
+    /// dragged at all. When zoomed beyond the canvas the image can be panned
+    /// up to the point where its far edge reaches the canvas edge.
+    private func clampOffset(_ offset: CGSize,
+                              source: UIImage,
+                              scale: CGFloat) -> CGSize {
+        guard canvasSize > 0 else { return .zero }
+        let fitScale = min(canvasSize / source.size.width,
+                           canvasSize / source.size.height)
+        let imgW = source.size.width  * fitScale * scale
+        let imgH = source.size.height * fitScale * scale
+        let maxX = max(0, (imgW - canvasSize) / 2)
+        let maxY = max(0, (imgH - canvasSize) / 2)
+        return CGSize(
+            width:  min(maxX, max(-maxX, offset.width)),
+            height: min(maxY, max(-maxY, offset.height))
         )
     }
 }

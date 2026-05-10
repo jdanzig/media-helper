@@ -84,6 +84,12 @@ final class SquarifyViewModel: ObservableObject {
         }
     }
 
+    /// Reset to the initial empty state.
+    func clear() {
+        pickerItem      = nil   // triggers loadImage() → resets source & status
+        backgroundColor = .black
+    }
+
     // MARK: - Rendering
 
     /// Produce an `outputSide × outputSide` UIImage by applying the given

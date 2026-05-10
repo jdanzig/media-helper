@@ -60,14 +60,24 @@ struct StitchView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
-                Button {
-                    Task { await vm.save() }
-                } label: {
-                    if vm.isSaving { ProgressView() }
-                    else { Label("Save to Photos", systemImage: "square.and.arrow.down") }
+                HStack(spacing: 12) {
+                    Button("Clear", role: .destructive) {
+                        vm.clear()
+                    }
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: .infinity)
+                    .disabled(vm.images.isEmpty)
+
+                    Button {
+                        Task { await vm.save() }
+                    } label: {
+                        if vm.isSaving { ProgressView() }
+                        else { Label("Save to Photos", systemImage: "square.and.arrow.down") }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .frame(maxWidth: .infinity)
+                    .disabled(vm.output == nil || vm.isSaving)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(vm.output == nil || vm.isSaving)
                 .padding(.horizontal)
                 .padding(.bottom)
             }
