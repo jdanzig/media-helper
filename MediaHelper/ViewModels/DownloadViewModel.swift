@@ -32,6 +32,9 @@ final class DownloadViewModel: ObservableObject {
     @Published private(set) var resolved: ResolverResult?
     /// Total number of media items found in the post (≥ 1 when resolved ≠ nil).
     @Published private(set) var resolvedCount: Int = 0
+    /// Number of items whose download has completed. Updated after each file
+    /// lands so the view can show "2 of 4 downloaded" during multi-item jobs.
+    @Published private(set) var downloadedCount: Int = 0
     @Published private(set) var outputs: TranscriptionOutputs?
     /// Local file URL of the most recently downloaded media. Persists after
     /// save so the share sheet can offer the file to other apps / Photos.
@@ -71,6 +74,7 @@ final class DownloadViewModel: ObservableObject {
     func urlDidChange() {
         resolved = nil
         resolvedCount = 0
+        downloadedCount = 0
         outputs = nil
         progress = 0
         if let url = SocialURLParser.url(from: urlText) {
@@ -208,6 +212,7 @@ final class DownloadViewModel: ObservableObject {
                 let fileURL = try await task.value
                 observeTask.cancel()
                 downloadedFiles.append((fileURL, result.isVideo))
+                downloadedCount = downloadedFiles.count
             }
             progress = 1.0
 
@@ -308,6 +313,7 @@ final class DownloadViewModel: ObservableObject {
         progress = 0
         resolved = nil
         resolvedCount = 0
+        downloadedCount = 0
         outputs = nil
         downloadedFileURL = nil
         selections = OutputSelections()

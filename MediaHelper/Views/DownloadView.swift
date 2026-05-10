@@ -52,9 +52,15 @@ struct DownloadView: View {
                     statusBanner
                     if showsProgressBar {
                         ProgressView(value: vm.progress)
-                        Text("\(Int(vm.progress * 100))%")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                        HStack {
+                            Text("\(Int(vm.progress * 100))%")
+                            if vm.resolvedCount > 1 {
+                                Spacer()
+                                Text("\(vm.downloadedCount) of \(vm.resolvedCount) downloaded")
+                            }
+                        }
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
                     }
                 }
 
