@@ -15,10 +15,14 @@ struct TranscribeView: View {
         NavigationStack {
             Form {
                 Section("Video") {
+                    // Capture into a local let so the @MainActor-isolated
+                    // property isn't referenced directly inside the
+                    // @Sendable PhotosPicker content closure (Swift 6).
+                    let videoName = vm.pickedVideoName ?? "Pick a video"
                     PhotosPicker(selection: $vm.pickerItem,
                                  matching: .videos,
                                  photoLibrary: .shared()) {
-                        Label(vm.pickedVideoName ?? "Pick a video",
+                        Label(videoName,
                               systemImage: "photo.on.rectangle.angled")
                     }
 

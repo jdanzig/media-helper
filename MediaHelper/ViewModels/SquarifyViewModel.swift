@@ -102,7 +102,7 @@ final class SquarifyViewModel: ObservableObject {
     ///  - The user's `scale` multiplier and `offset` are then applied.
     ///  - Everything is scaled up by `outputSide / canvasSize` for the final
     ///    high-resolution render.
-    private static func renderSquare(
+    private nonisolated static func renderSquare(
         source:     UIImage,
         background: UIColor,
         scale:      CGFloat,
