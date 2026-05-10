@@ -28,7 +28,10 @@ final class DownloadViewModel: ObservableObject {
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var statusMessage: String = "Paste a link above."
     @Published private(set) var progress: Double = 0
+    /// First resolved item — used by the UI to show title / host / type.
     @Published private(set) var resolved: ResolverResult?
+    /// Total number of media items found in the post (≥ 1 when resolved ≠ nil).
+    @Published private(set) var resolvedCount: Int = 0
     @Published private(set) var outputs: TranscriptionOutputs?
     /// Local file URL of the most recently downloaded media. Persists after
     /// save so the share sheet can offer the file to other apps / Photos.
@@ -67,6 +70,7 @@ final class DownloadViewModel: ObservableObject {
     /// sees the clean version in the text field immediately.
     func urlDidChange() {
         resolved = nil
+        resolvedCount = 0
         outputs = nil
         progress = 0
         if let url = SocialURLParser.url(from: urlText) {
@@ -137,9 +141,10 @@ final class DownloadViewModel: ObservableObject {
         clipboardSuggestion = nil
     }
 
-    /// Resolve, download, and (for videos) optionally transcribe / burn
-    /// subtitles / save a transcript. Runs the whole pipeline in one
-    /// `Task` so cancellation is straightforward.
+    /// Resolve, download, and optionally transcribe / burn subtitles.
+    /// For posts with multiple media items (e.g. a tweet with 4 attachments)
+    /// all items are downloaded and saved to Photos; transcription only runs
+    /// when there is exactly one video.
     func start() async {
         guard let url = SocialURLParser.url(from: urlText) else {
             phase = .failed("Invalid URL")
@@ -159,37 +164,76 @@ final class DownloadViewModel: ObservableObject {
 
         // Request background execution time so the download continues if
         // the user switches to another app. iOS typically grants ~3 minutes.
-        // The expiration handler fires if we run out of time; the download
-        // will be cut short, but there's nothing more we can do gracefully.
         let bgTask = UIApplication.shared.beginBackgroundTask(withName: "MediaHelper.download") {}
         defer { UIApplication.shared.endBackgroundTask(bgTask) }
 
         do {
-            // 1. Resolve
+            // 1. Resolve all media items in the post.
             phase = .resolving
-            statusMessage = "Looking for a media URL…"
+            statusMessage = "Looking for media…"
             progress = 0
-            let result = try await resolver.resolve(url)
-            resolved = result
-            statusMessage = result.isVideo ? "Found video. Starting download…"
-                                           : "Found image. Starting download…"
-
-            // 2. Download (with progress stream)
-            phase = .downloading
-            let (progressStream, task) = downloader.download(
-                from: result.mediaURL,
-                headers: result.requestHeaders
-            )
-            let observeTask = Task { [weak self] in
-                for await fraction in progressStream {
-                    await MainActor.run { self?.progress = fraction }
-                }
+            let results = try await resolver.resolveAll(url)
+            guard !results.isEmpty else {
+                throw DownloadError.resolutionFailed("no media found.")
             }
-            let fileURL = try await task.value
-            observeTask.cancel()
+            resolved = results.first
+            resolvedCount = results.count
+
+            if results.count == 1 {
+                statusMessage = results[0].isVideo ? "Found video. Starting download…"
+                                                   : "Found image. Starting download…"
+            } else {
+                statusMessage = "Found \(results.count) items. Starting download…"
+            }
+
+            // 2. Download all items, reporting aggregate progress.
+            phase = .downloading
+            var downloadedFiles: [(fileURL: URL, isVideo: Bool)] = []
+            let total = Double(results.count)
+
+            for (index, result) in results.enumerated() {
+                if results.count > 1 {
+                    statusMessage = "Downloading \(index + 1) of \(results.count)…"
+                }
+                let (progressStream, task) = downloader.download(
+                    from: result.mediaURL,
+                    headers: result.requestHeaders
+                )
+                let base = Double(index) / total
+                let observeTask = Task { [weak self] in
+                    for await fraction in progressStream {
+                        await MainActor.run { self?.progress = base + fraction / total }
+                    }
+                }
+                let fileURL = try await task.value
+                observeTask.cancel()
+                downloadedFiles.append((fileURL, result.isVideo))
+            }
             progress = 1.0
 
-            // 3. Images — save and done.
+            // 3a. Multiple items: save each to Photos and we're done.
+            //     Transcription is skipped — it doesn't make sense to
+            //     run a pipeline over multiple independent attachments.
+            if results.count > 1 {
+                statusMessage = "Saving to Photos…"
+                for (fileURL, isVideo) in downloadedFiles {
+                    if isVideo {
+                        try await PhotoLibrarySaver.saveVideo(at: fileURL)
+                    } else {
+                        try await PhotoLibrarySaver.saveImage(at: fileURL)
+                    }
+                }
+                downloadedFileURL = makeShareCopy(of: downloadedFiles[0].fileURL)
+                phase = .done
+                statusMessage = savedSummary(downloadedFiles)
+                DownloadNotifier.shared.notifyIfBackgrounded(title: results.first?.title)
+                return
+            }
+
+            // 3b. Single item: existing pipeline (image / video / transcription).
+            let result  = results[0]
+            let fileURL = downloadedFiles[0].fileURL
+
             if !result.isVideo {
                 statusMessage = "Saving to Photos…"
                 try await PhotoLibrarySaver.saveImage(at: fileURL)
@@ -200,7 +244,6 @@ final class DownloadViewModel: ObservableObject {
                 return
             }
 
-            // 4. Videos: run the transcription pipeline.
             let options = selections.toTranscriptionOptions(speakerLabels: speakerLabels)
 
             if !options.needsTranscription {
@@ -230,6 +273,7 @@ final class DownloadViewModel: ObservableObject {
             phase = .done
             statusMessage = "Done. Outputs saved."
             DownloadNotifier.shared.notifyIfBackgrounded(title: result.title)
+
         } catch let e as DownloadError {
             phase = .failed(e.localizedDescription)
             statusMessage = e.localizedDescription
@@ -263,6 +307,7 @@ final class DownloadViewModel: ObservableObject {
         statusMessage = "Paste a link above."
         progress = 0
         resolved = nil
+        resolvedCount = 0
         outputs = nil
         downloadedFileURL = nil
         selections = OutputSelections()
@@ -274,6 +319,17 @@ final class DownloadViewModel: ObservableObject {
     }
 
     // MARK: - Private helpers
+
+    /// Human-readable summary of a multi-item save.
+    private func savedSummary(_ files: [(fileURL: URL, isVideo: Bool)]) -> String {
+        let videos = files.filter(\.isVideo).count
+        let images = files.filter { !$0.isVideo }.count
+        switch (videos, images) {
+        case (0, let n): return "Saved \(n) photo\(n == 1 ? "" : "s") to Photos."
+        case (let n, 0): return "Saved \(n) video\(n == 1 ? "" : "s") to Photos."
+        default:         return "Saved \(videos) video\(videos == 1 ? "" : "s") and \(images) photo\(images == 1 ? "" : "s") to Photos."
+        }
+    }
 
     /// Copies `url` to Caches for reliable share-sheet access.
     /// Temp-dir URLs can be inaccessible to share-sheet extensions.

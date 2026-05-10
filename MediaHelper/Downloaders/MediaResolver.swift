@@ -9,6 +9,18 @@ import Foundation
 protocol MediaResolver {
     var platform: SocialPlatform { get }
     func resolve(_ url: URL) async throws -> ResolverResult
+
+    /// Resolve ALL media items in a post (e.g. up to 4 photos/videos in a
+    /// tweet). The default implementation wraps `resolve` so every platform
+    /// gets multi-item support for free; only platforms that natively return
+    /// multiple items (Twitter) override this.
+    func resolveAll(_ url: URL) async throws -> [ResolverResult]
+}
+
+extension MediaResolver {
+    func resolveAll(_ url: URL) async throws -> [ResolverResult] {
+        [try await resolve(url)]
+    }
 }
 
 /// Shared HTML-scraping utilities used by the best-effort resolvers.

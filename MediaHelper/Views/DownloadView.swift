@@ -63,7 +63,11 @@ struct DownloadView: View {
                         if let t = r.title {
                             LabeledContent("Title", value: t).lineLimit(3)
                         }
-                        LabeledContent("Type", value: r.isVideo ? "Video" : "Image")
+                        if vm.resolvedCount > 1 {
+                            LabeledContent("Items", value: "\(vm.resolvedCount)")
+                        } else {
+                            LabeledContent("Type", value: r.isVideo ? "Video" : "Image")
+                        }
                         LabeledContent("Host", value: r.mediaURL.host ?? "—")
                     }
                 }

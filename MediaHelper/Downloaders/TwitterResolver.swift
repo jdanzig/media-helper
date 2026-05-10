@@ -37,15 +37,72 @@ struct TwitterResolver: MediaResolver {
         return try await resolveViaOpenGraph(url)
     }
 
+    // MARK: - resolveAll (multi-media override)
+
+    /// Twitter posts can contain up to 4 photos, videos, or GIFs.
+    /// The syndication endpoint returns all of them in `mediaDetails`, so
+    /// we collect every entry rather than stopping at the first one.
+    func resolveAll(_ url: URL) async throws -> [ResolverResult] {
+        if let tweetID = Self.extractTweetID(from: url),
+           let results = try? await allItemsViaSyndication(tweetID: tweetID),
+           !results.isEmpty {
+            return results
+        }
+        // Fall back to the single-item OpenGraph path.
+        return [try await resolveViaOpenGraph(url)]
+    }
+
     // MARK: - Syndication
 
+    /// Fetch syndication JSON and return one `ResolverResult` per media
+    /// entry — preserving tweet order (photos and videos interleaved as
+    /// the author attached them).
+    private func allItemsViaSyndication(tweetID: String) async throws -> [ResolverResult] {
+        let (title, mediaDetails) = try await fetchSyndicationMedia(tweetID: tweetID)
+
+        var results: [ResolverResult] = []
+        for entry in mediaDetails {
+            let type  = entry["type"] as? String
+            let thumb = (entry["media_url_https"] as? String).flatMap(URL.init(string:))
+
+            if type == "video" || type == "animated_gif" {
+                guard let videoInfo = entry["video_info"] as? [String: Any],
+                      let variants  = videoInfo["variants"] as? [[String: Any]],
+                      let best      = Self.pickBestVariant(variants),
+                      let urlStr    = best["url"] as? String,
+                      let mediaURL  = URL(string: urlStr) else { continue }
+                results.append(ResolverResult(mediaURL: mediaURL, title: title,
+                                              thumbnailURL: thumb, isVideo: true,
+                                              platform: .twitter))
+
+            } else if type == "photo", let thumb {
+                results.append(ResolverResult(mediaURL: thumb, title: title,
+                                              thumbnailURL: thumb, isVideo: false,
+                                              platform: .twitter))
+            }
+        }
+        return results
+    }
+
+    /// Single-item resolve kept for backward compatibility. Prefers video
+    /// over photo (same behaviour as before) and delegates to the
+    /// multi-item path so the JSON is only fetched once.
     private func resolveViaSyndication(tweetID: String) async throws -> ResolverResult {
+        let all = try await allItemsViaSyndication(tweetID: tweetID)
+        if let video = all.first(where: \.isVideo) { return video }
+        if let first = all.first { return first }
+        throw DownloadError.resolutionFailed("syndication returned no media.")
+    }
+
+    /// Fetch and decode the syndication JSON for a tweet. Returns the
+    /// tweet text (used as title) and the raw `mediaDetails` array.
+    private func fetchSyndicationMedia(tweetID: String) async throws -> (title: String?, mediaDetails: [[String: Any]]) {
         let token = Self.syndicationToken(for: tweetID)
         var comps = URLComponents(string: "https://cdn.syndication.twimg.com/tweet-result")!
         comps.queryItems = [
-            URLQueryItem(name: "id", value: tweetID),
+            URLQueryItem(name: "id",    value: tweetID),
             URLQueryItem(name: "token", value: token),
-            URLQueryItem(name: "lang", value: "en")
+            URLQueryItem(name: "lang",  value: "en")
         ]
         guard let endpoint = comps.url else {
             throw DownloadError.resolutionFailed("bad syndication URL.")
@@ -61,51 +118,18 @@ struct TwitterResolver: MediaResolver {
 
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw DownloadError.networkFailed("syndication HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+            throw DownloadError.networkFailed(
+                "syndication HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"
+            )
         }
-
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw DownloadError.resolutionFailed("syndication returned non-JSON.")
         }
 
-        // `mediaDetails` is an array; videos have `video_info.variants`.
+        let title        = (json["text"] as? String)
+                        ?? ((json["user"] as? [String: Any])?["name"] as? String)
         let mediaDetails = json["mediaDetails"] as? [[String: Any]] ?? []
-        let title = (json["text"] as? String)
-            ?? ((json["user"] as? [String: Any])?["name"] as? String)
-
-        // Prefer the first media entry that has video; fall back to the
-        // first with a photo.
-        if let videoEntry = mediaDetails.first(where: { ($0["type"] as? String) == "video"
-                                                      || ($0["type"] as? String) == "animated_gif" }),
-           let videoInfo = videoEntry["video_info"] as? [String: Any],
-           let variants = videoInfo["variants"] as? [[String: Any]],
-           let best = Self.pickBestVariant(variants),
-           let urlStr = best["url"] as? String,
-           let mediaURL = URL(string: urlStr) {
-
-            let thumb = (videoEntry["media_url_https"] as? String).flatMap(URL.init(string:))
-            return ResolverResult(
-                mediaURL: mediaURL,
-                title: title,
-                thumbnailURL: thumb,
-                isVideo: true,
-                platform: .twitter
-            )
-        }
-
-        if let photo = mediaDetails.first(where: { ($0["type"] as? String) == "photo" }),
-           let urlStr = photo["media_url_https"] as? String,
-           let mediaURL = URL(string: urlStr) {
-            return ResolverResult(
-                mediaURL: mediaURL,
-                title: title,
-                thumbnailURL: mediaURL,
-                isVideo: false,
-                platform: .twitter
-            )
-        }
-
-        throw DownloadError.resolutionFailed("syndication returned no media.")
+        return (title, mediaDetails)
     }
 
     /// Pick the highest-bitrate MP4 variant; skip HLS (m3u8).
