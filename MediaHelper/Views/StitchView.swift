@@ -12,17 +12,18 @@ struct StitchView: View {
         NavigationStack {
             VStack(spacing: 16) {
 
+                // Capture before the @Sendable PhotosPicker closure (Swift 6).
+                let pickerLabel = vm.images.isEmpty
+                    ? "Pick images"
+                    : "Change selection (\(vm.images.count))"
                 PhotosPicker(
                     selection: $vm.pickerItems,
                     maxSelectionCount: 20,
                     selectionBehavior: .ordered,
                     matching: .images
                 ) {
-                    Label(
-                        vm.images.isEmpty ? "Pick images" : "Change selection (\(vm.images.count))",
-                        systemImage: "photo.on.rectangle.angled"
-                    )
-                    .frame(maxWidth: .infinity)
+                    Label(pickerLabel, systemImage: "photo.on.rectangle.angled")
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .padding(.horizontal)

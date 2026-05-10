@@ -46,15 +46,14 @@ struct SquarifyView: View {
             VStack(spacing: 16) {
 
                 // MARK: Picker button
+                // Capture before the @Sendable PhotosPicker closure (Swift 6).
+                let pickerLabel = vm.source == nil ? "Pick image" : "Change image"
                 PhotosPicker(
                     selection: $vm.pickerItem,
                     matching: .images
                 ) {
-                    Label(
-                        vm.source == nil ? "Pick image" : "Change image",
-                        systemImage: "photo"
-                    )
-                    .frame(maxWidth: .infinity)
+                    Label(pickerLabel, systemImage: "photo")
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .padding(.horizontal)
