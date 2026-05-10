@@ -52,6 +52,8 @@ struct SocialURLParser {
             comps.queryItems = nil
         case .instagram:
             comps.queryItems = nil
+        case .threads:
+            comps.queryItems = nil
         case .facebook:
             // /watch/?v=<id> — keep only v; all other paths have ID in path.
             let pathIsWatch = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -87,6 +89,8 @@ struct SocialURLParser {
             return .instagram
         case "facebook.com", "fb.com", "fb.watch":
             return .facebook
+        case "threads.net":
+            return .threads
         default:
             return .unknown
         }

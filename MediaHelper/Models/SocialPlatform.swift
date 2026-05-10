@@ -10,6 +10,7 @@ enum SocialPlatform: String, CaseIterable, Identifiable, Hashable {
     case tiktok
     case instagram
     case facebook
+    case threads
     case unknown
 
     var id: String { rawValue }
@@ -22,6 +23,7 @@ enum SocialPlatform: String, CaseIterable, Identifiable, Hashable {
         case .tiktok:    return "TikTok"
         case .instagram: return "Instagram"
         case .facebook:  return "Facebook"
+        case .threads:   return "Threads"
         case .unknown:   return "Unknown"
         }
     }
@@ -34,6 +36,7 @@ enum SocialPlatform: String, CaseIterable, Identifiable, Hashable {
         case .tiktok:    return "music.note.tv.fill"
         case .instagram: return "camera.fill"
         case .facebook:  return "f.square.fill"
+        case .threads:   return "bubble.left.and.bubble.right.fill"
         case .unknown:   return "questionmark.circle"
         }
     }
