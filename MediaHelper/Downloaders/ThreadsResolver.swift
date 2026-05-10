@@ -72,9 +72,22 @@ struct ThreadsResolver: MediaResolver {
 
     // MARK: - Page scrape
 
+    /// Try every user agent in order against `url`. For each UA we both
+    /// fetch the page AND attempt media extraction from the resulting HTML.
+    /// This is important because some UAs (Chrome) receive a JS-only shell
+    /// that passes HTTP 200 but contains no embedded media, while others
+    /// (Googlebot) receive a full SSR page. We must not stop at the first
+    /// HTTP 200 — we must stop at the first UA whose HTML yields media.
     private func resolveViaPage(_ url: URL) async throws -> ResolverResult {
-        let (html, ua) = try await Self.fetchHTML(url)
-        return try Self.extractMedia(from: html, referer: url.absoluteString, pageUA: ua)
+        for ua in Self.userAgents {
+            guard let html = try? await Self.fetchHTMLWith(ua: ua, url: url) else { continue }
+            if let result = try? Self.extractMedia(from: html,
+                                                   referer: url.absoluteString,
+                                                   pageUA: ua) {
+                return result
+            }
+        }
+        throw DownloadError.resolutionFailed("no media found in page HTML.")
     }
 
     // MARK: - Embed page
@@ -82,11 +95,19 @@ struct ThreadsResolver: MediaResolver {
     private func resolveViaEmbed(shortcode: String) async throws -> ResolverResult {
         // Threads embed pages are lighter renders and sometimes expose
         // the video URL when the main page's JS bundle obscures it.
+        // Try each UA in order here too for the same reason as resolveViaPage.
         guard let embedURL = URL(string: "https://www.threads.net/t/\(shortcode)/embed/") else {
             throw DownloadError.resolutionFailed("couldn't build embed URL.")
         }
-        let (html, ua) = try await Self.fetchHTML(embedURL)
-        return try Self.extractMedia(from: html, referer: embedURL.absoluteString, pageUA: ua)
+        for ua in Self.userAgents {
+            guard let html = try? await Self.fetchHTMLWith(ua: ua, url: embedURL) else { continue }
+            if let result = try? Self.extractMedia(from: html,
+                                                   referer: embedURL.absoluteString,
+                                                   pageUA: ua) {
+                return result
+            }
+        }
+        throw DownloadError.resolutionFailed("no media found in embed page HTML.")
     }
 
     // MARK: - Shared extraction
@@ -264,47 +285,36 @@ struct ThreadsResolver: MediaResolver {
         return URL(string: s.replacingOccurrences(of: "threads.net", with: "threads.com")) ?? url
     }
 
-    /// Fetch `url` trying each user agent in turn until one returns a 2xx/3xx.
+    /// Fetch `url` with a specific `ua` string. Returns the UTF-8 HTML body on
+    /// HTTP 2xx/3xx, or throws on network error / non-2xx status.
     ///
-    /// Returns both the HTML body and the User-Agent string that succeeded.
-    /// The caller passes that UA into `extractMedia` so the same UA is used
-    /// for subsequent CDN media downloads — CDN URLs can carry session tokens
-    /// tied to the page-fetch UA, and mismatching causes 403.
-    private static func fetchHTML(_ url: URL) async throws -> (html: String, ua: String) {
-        var lastError: Error = DownloadError.networkFailed("no user agent succeeded")
+    /// Callers iterate over `userAgents` themselves (see `resolveViaPage`) so
+    /// they can also try each UA through the full extraction pipeline — stopping
+    /// at the first (UA, HTML) pair that actually yields media, not the first
+    /// that merely returns HTTP 200.
+    private static func fetchHTMLWith(ua: String, url: URL) async throws -> String {
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 15
+        req.setValue(ua, forHTTPHeaderField: "User-Agent")
+        req.setValue(
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            forHTTPHeaderField: "Accept"
+        )
+        req.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        req.setValue("1", forHTTPHeaderField: "Upgrade-Insecure-Requests")
+        req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
 
-        for ua in userAgents {
-            var req = URLRequest(url: url)
-            req.timeoutInterval = 15
-            req.setValue(ua, forHTTPHeaderField: "User-Agent")
-            req.setValue(
-                "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                forHTTPHeaderField: "Accept"
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse,
+              (200..<400).contains(http.statusCode) else {
+            throw DownloadError.networkFailed(
+                "HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"
             )
-            req.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
-            req.setValue("1", forHTTPHeaderField: "Upgrade-Insecure-Requests")
-            req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-
-            do {
-                let (data, response) = try await URLSession.shared.data(for: req)
-                guard let http = response as? HTTPURLResponse else { continue }
-                guard (200..<400).contains(http.statusCode) else {
-                    lastError = DownloadError.networkFailed("Threads HTTP \(http.statusCode)")
-                    continue  // try next user agent
-                }
-                guard let html = String(data: data, encoding: .utf8) else {
-                    throw DownloadError.resolutionFailed("non-UTF8 response.")
-                }
-                return (html, ua)
-            } catch let e as DownloadError {
-                throw e   // propagate non-HTTP errors immediately
-            } catch {
-                lastError = error
-                continue
-            }
         }
-
-        throw lastError
+        guard let html = String(data: data, encoding: .utf8) else {
+            throw DownloadError.resolutionFailed("non-UTF8 response.")
+        }
+        return html
     }
 
     /// Extract the post shortcode from a Threads URL.
