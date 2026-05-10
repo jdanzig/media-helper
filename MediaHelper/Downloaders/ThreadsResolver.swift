@@ -68,7 +68,7 @@ struct ThreadsResolver: MediaResolver {
 
     private func resolveViaPage(_ url: URL) async throws -> ResolverResult {
         let html = try await Self.fetchHTML(url)
-        return try Self.extractMedia(from: html)
+        return try Self.extractMedia(from: html, referer: url.absoluteString)
     }
 
     // MARK: - Embed page
@@ -80,13 +80,23 @@ struct ThreadsResolver: MediaResolver {
             throw DownloadError.resolutionFailed("couldn't build embed URL.")
         }
         let html = try await Self.fetchHTML(embedURL)
-        return try Self.extractMedia(from: html)
+        return try Self.extractMedia(from: html, referer: embedURL.absoluteString)
     }
 
     // MARK: - Shared extraction
 
     /// Try every signal we know about, in order of reliability.
-    private static func extractMedia(from html: String) throws -> ResolverResult {
+    ///
+    /// `referer` is the page URL we scraped — it is forwarded as the `Referer`
+    /// request header when downloading from Instagram's CDN, which otherwise
+    /// returns 403 for bare requests with no origin context.
+    private static func extractMedia(from html: String, referer: String) throws -> ResolverResult {
+        // Instagram/Threads CDN requires Referer + a browser-like User-Agent
+        // for media downloads. Without these the CDN returns 403.
+        let cdnHeaders: [String: String] = [
+            "Referer": referer,
+            "User-Agent": userAgents[1],   // Chrome UA — works for CDN downloads
+        ]
         let title = HTMLScraper.metaContent(html, property: "og:title")
         let thumb = HTMLScraper.metaContent(html, property: "og:image")
                         .flatMap(URL.init(string:))
@@ -96,8 +106,9 @@ struct ThreadsResolver: MediaResolver {
                 ?? HTMLScraper.metaContent(html, property: "og:video:secure_url")
                 ?? HTMLScraper.metaContent(html, property: "og:video:url"),
            let videoURL = URL(string: s) {
-            return ResolverResult(mediaURL: videoURL, title: title,
-                                  thumbnailURL: thumb, isVideo: true, platform: .threads)
+            return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumb,
+                                  isVideo: true, platform: .threads,
+                                  requestHeaders: cdnHeaders)
         }
 
         // 2. JSON key sweep for video — Threads embeds Instagram-style React
@@ -107,8 +118,9 @@ struct ThreadsResolver: MediaResolver {
         for key in videoKeys {
             let hits = allDecoded(in: html, pattern: "\"\(key)\":\"([^\"]+)\"")
             if let urlStr = hits.first, let videoURL = URL(string: urlStr) {
-                return ResolverResult(mediaURL: videoURL, title: title,
-                                      thumbnailURL: thumb, isVideo: true, platform: .threads)
+                return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumb,
+                                      isVideo: true, platform: .threads,
+                                      requestHeaders: cdnHeaders)
             }
         }
 
@@ -122,8 +134,9 @@ struct ThreadsResolver: MediaResolver {
         for pattern in srcPatterns {
             let hits = allDecoded(in: html, pattern: pattern)
             if let urlStr = hits.first, let videoURL = URL(string: urlStr) {
-                return ResolverResult(mediaURL: videoURL, title: title,
-                                      thumbnailURL: thumb, isVideo: true, platform: .threads)
+                return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumb,
+                                      isVideo: true, platform: .threads,
+                                      requestHeaders: cdnHeaders)
             }
         }
 
@@ -131,8 +144,9 @@ struct ThreadsResolver: MediaResolver {
         let mp4Hits = allDecoded(in: html,
                                  pattern: #"(https?://[^"'<\s\\]+\.mp4[^"'<\s\\]*)"#)
         if let urlStr = mp4Hits.first, let videoURL = URL(string: urlStr) {
-            return ResolverResult(mediaURL: videoURL, title: title,
-                                  thumbnailURL: thumb, isVideo: true, platform: .threads)
+            return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumb,
+                                  isVideo: true, platform: .threads,
+                                  requestHeaders: cdnHeaders)
         }
 
         // 5. JSON key sweep for post images. We scan ALL occurrences of each
@@ -142,8 +156,9 @@ struct ThreadsResolver: MediaResolver {
             let hits = allDecoded(in: html, pattern: "\"\(key)\":\"([^\"]+)\"")
             if let urlStr = hits.first(where: { !isNonMediaURL($0) }),
                let imageURL = URL(string: urlStr) {
-                return ResolverResult(mediaURL: imageURL, title: title,
-                                      thumbnailURL: imageURL, isVideo: false, platform: .threads)
+                return ResolverResult(mediaURL: imageURL, title: title, thumbnailURL: imageURL,
+                                      isVideo: false, platform: .threads,
+                                      requestHeaders: cdnHeaders)
             }
         }
 
@@ -155,14 +170,16 @@ struct ThreadsResolver: MediaResolver {
         )
         if let urlStr = imgHits.first(where: { !isNonMediaURL($0) }),
            let imageURL = URL(string: urlStr) {
-            return ResolverResult(mediaURL: imageURL, title: title,
-                                  thumbnailURL: imageURL, isVideo: false, platform: .threads)
+            return ResolverResult(mediaURL: imageURL, title: title, thumbnailURL: imageURL,
+                                  isVideo: false, platform: .threads,
+                                  requestHeaders: cdnHeaders)
         }
 
         // 7. og:image fallback — only if it looks like user content, not a logo.
         if let imageURL = thumb, !isNonMediaURL(imageURL.absoluteString) {
             return ResolverResult(mediaURL: imageURL, title: title,
-                                  thumbnailURL: imageURL, isVideo: false, platform: .threads)
+                                  thumbnailURL: imageURL, isVideo: false, platform: .threads,
+                                  requestHeaders: cdnHeaders)
         }
 
         throw DownloadError.resolutionFailed("no media found in page HTML.")
