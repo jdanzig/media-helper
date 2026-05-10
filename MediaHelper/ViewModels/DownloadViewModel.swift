@@ -117,8 +117,13 @@ final class DownloadViewModel: ObservableObject {
     func checkClipboard() {
         guard urlText.isEmpty else { return }
 
-        let raw = UIPasteboard.general.url?.absoluteString
-                ?? UIPasteboard.general.string
+        // Prefer the raw string over UIPasteboard.url?.absoluteString.
+        // The .url property re-serializes via a URL object whose parser can
+        // misinterpret `@` in a URL path (e.g. Threads /@username/post/ID)
+        // as a userinfo separator, corrupting the host in the output string.
+        // The plain string is always what the user (or source app) actually copied.
+        let raw = UIPasteboard.general.string
+                ?? UIPasteboard.general.url?.absoluteString
                 ?? ""
         guard !raw.isEmpty, raw != lastOfferedClipboard else { return }
 

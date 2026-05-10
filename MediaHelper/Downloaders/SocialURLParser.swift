@@ -35,51 +35,74 @@ struct SocialURLParser {
     ///  - **Unknown / short-links** (fb.watch, youtu.be, t.co, vm.tiktok.com):
     ///    strip all query params; the meaningful part is the path.
     static func stripTrackingParams(_ url: URL) -> URL {
-        // IMPORTANT: Do NOT use `URLComponents(url:)` here. For URLs whose
-        // path contains `@` (e.g. Threads: `/@username/post/ID`), the RFC 3986
-        // authority parser can misinterpret `@` as a userinfo separator and
-        // set `host` to the substring after `@`, corrupting the reconstructed
-        // URL. Instead, build URLComponents manually from URL's already-parsed
-        // properties, which are always correct.
-        var comps = URLComponents()
-        comps.scheme   = url.scheme
-        comps.user     = url.user
-        comps.password = url.password
-        comps.host     = url.host
-        comps.port     = url.port
-        comps.path     = url.path
-        comps.fragment = url.fragment
-        // Parse the existing query string into items so we can selectively
-        // preserve them for platforms that need a query parameter (e.g. YouTube ?v=).
-        let existingItems = url.query.flatMap {
-            URLComponents(string: "?\($0)")?.queryItems
-        }
+        // Fast path: if there's no query string there's nothing to strip.
+        // Returning the original URL avoids any URLComponents round-trip,
+        // which is important for Threads URLs whose path contains `@username`
+        // — URLComponents can percent-encode that `@` to `%40`, changing the
+        // URL string unnecessarily and triggering a spurious clipboard write.
+        guard url.query != nil else { return url }
 
         let platform = detectPlatform(url)
+
         switch platform {
         case .youtube:
-            // youtu.be short links have the ID in the path, not ?v=
-            let isShortLink = url.host?.lowercased().hasSuffix("youtu.be") == true
-            if isShortLink {
-                comps.queryItems = nil
-            } else {
-                let v = existingItems?.first(where: { $0.name == "v" })
-                comps.queryItems = v.map { [$0] }
+            // youtu.be short links have the ID in the path, not ?v=.
+            if url.host?.lowercased().hasSuffix("youtu.be") == true {
+                return removeQuery(from: url)
             }
+            // Full YouTube URLs: keep only the video-ID parameter.
+            if let v = queryValue("v", in: url) {
+                return replaceQuery(in: url, with: [URLQueryItem(name: "v", value: v)])
+            }
+            return removeQuery(from: url)
+
         case .facebook:
-            // /watch/?v=<id> — keep only v; all other paths have ID in path.
-            let pathIsWatch = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                                      .lowercased() == "watch"
-            if pathIsWatch {
-                let v = existingItems?.first(where: { $0.name == "v" })
-                comps.queryItems = v.map { [$0] }
-            } else {
-                comps.queryItems = nil
+            // /watch/?v=<id> — keep only v; all other FB paths carry the ID in the path.
+            let pathIsWatch = url.path
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                .lowercased() == "watch"
+            if pathIsWatch, let v = queryValue("v", in: url) {
+                return replaceQuery(in: url, with: [URLQueryItem(name: "v", value: v)])
             }
+            return removeQuery(from: url)
+
         default:
-            // Twitter, TikTok, Instagram, Threads, unknown — strip all params.
-            comps.queryItems = nil
+            // Twitter, TikTok, Instagram, Threads, unknown — drop the entire query.
+            return removeQuery(from: url)
         }
+    }
+
+    // MARK: - Private query helpers
+
+    /// Strip the query string using string slicing rather than URLComponents.
+    /// URLComponents re-parses the full URL string and can misinterpret `@`
+    /// in a path segment (e.g. Threads `/@username/post/ID`) as a userinfo
+    /// separator, corrupting the host. Slicing at the `?` character is safe.
+    private static func removeQuery(from url: URL) -> URL {
+        let s = url.absoluteString
+        guard let cut = s.firstIndex(of: "?") else { return url }
+        // Preserve any fragment that follows the query.
+        let fragment = url.fragment.map { "#\($0)" } ?? ""
+        return URL(string: String(s[..<cut]) + fragment) ?? url
+    }
+
+    /// Return the decoded value of the first query item with the given name.
+    private static func queryValue(_ name: String, in url: URL) -> String? {
+        guard let q = url.query else { return nil }
+        // Parse only the query string — no risk of @ misinterpretation here.
+        return URLComponents(string: "?\(q)")?
+            .queryItems?.first(where: { $0.name == name })?.value
+    }
+
+    /// Replace the URL's entire query string with `items`.
+    /// Only called for YouTube / Facebook, whose paths never contain `@`,
+    /// so URLComponents(url:) is safe to use.
+    private static func replaceQuery(in url: URL,
+                                     with items: [URLQueryItem]) -> URL {
+        guard var comps = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
+            return url
+        }
+        comps.queryItems = items
         return comps.url ?? url
     }
 
