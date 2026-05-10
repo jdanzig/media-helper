@@ -25,7 +25,9 @@ struct SquarifyView: View {
     @State private var canvasSize: CGFloat = 300
 
     // Combined live transforms (unclamped).
-    private var totalScale:  CGFloat { confirmedScale * gestureScale }
+    // Clamp at 1.0 so the image never shrinks below the "fit inside canvas"
+    // default — the same convention used by Instagram, VSCO, etc.
+    private var totalScale:  CGFloat { max(1.0, confirmedScale * gestureScale) }
     private var totalOffset: CGSize  {
         CGSize(width:  confirmedOffset.width  + gestureOffset.width,
                height: confirmedOffset.height + gestureOffset.height)
@@ -171,7 +173,7 @@ struct SquarifyView: View {
                     state = value
                 }
                 .onEnded { value in
-                    let newScale = max(0.1, confirmedScale * value)
+                    let newScale = max(1.0, confirmedScale * value)
                     confirmedScale = newScale
                     // Re-clamp offset for the new (possibly smaller) scale.
                     if let source = vm.source {
