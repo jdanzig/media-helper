@@ -34,15 +34,21 @@ import Foundation
 struct ThreadsResolver: MediaResolver {
     let platform: SocialPlatform = .threads
 
-    /// User agents tried in order. Googlebot is listed first because Meta
-    /// whitelists it for SEO and will serve a full server-rendered page rather
-    /// than a JS shell or a 403. Chrome is a realistic fallback.
+    /// User agents tried in order when fetching the Threads page.
+    ///
+    /// Chrome is first: when the page is fetched with Chrome, the CDN URLs
+    /// embedded in the HTML carry session tokens that are compatible with
+    /// a standard Chrome download request — so the subsequent media download
+    /// succeeds. Googlebot is listed last as a page-fetch fallback (Meta
+    /// white-lists it for SEO), but CDN URLs baked into a Googlebot response
+    /// can be session-bound to Googlebot's context and may 403 when downloaded
+    /// by a real client, so it is only used when Chrome and Safari both fail.
     private static let userAgents: [String] = [
-        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 " +
             "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
     ]
 
     func resolve(_ url: URL) async throws -> ResolverResult {
@@ -67,8 +73,8 @@ struct ThreadsResolver: MediaResolver {
     // MARK: - Page scrape
 
     private func resolveViaPage(_ url: URL) async throws -> ResolverResult {
-        let html = try await Self.fetchHTML(url)
-        return try Self.extractMedia(from: html, referer: url.absoluteString)
+        let (html, ua) = try await Self.fetchHTML(url)
+        return try Self.extractMedia(from: html, referer: url.absoluteString, pageUA: ua)
     }
 
     // MARK: - Embed page
@@ -79,23 +85,30 @@ struct ThreadsResolver: MediaResolver {
         guard let embedURL = URL(string: "https://www.threads.net/t/\(shortcode)/embed/") else {
             throw DownloadError.resolutionFailed("couldn't build embed URL.")
         }
-        let html = try await Self.fetchHTML(embedURL)
-        return try Self.extractMedia(from: html, referer: embedURL.absoluteString)
+        let (html, ua) = try await Self.fetchHTML(embedURL)
+        return try Self.extractMedia(from: html, referer: embedURL.absoluteString, pageUA: ua)
     }
 
     // MARK: - Shared extraction
 
     /// Try every signal we know about, in order of reliability.
     ///
-    /// `referer` is the page URL we scraped — it is forwarded as the `Referer`
-    /// request header when downloading from Instagram's CDN, which otherwise
-    /// returns 403 for bare requests with no origin context.
-    private static func extractMedia(from html: String, referer: String) throws -> ResolverResult {
-        // Instagram/Threads CDN requires Referer + a browser-like User-Agent
-        // for media downloads. Without these the CDN returns 403.
+    /// `referer` is the page URL we scraped — forwarded as the `Referer` request
+    /// header for CDN downloads. `pageUA` is the User-Agent that successfully
+    /// fetched the page; CDN URLs can carry session tokens tied to that UA, so
+    /// the same UA must be used for the subsequent media download to avoid 403.
+    private static func extractMedia(from html: String,
+                                     referer: String,
+                                     pageUA: String) throws -> ResolverResult {
+        // Instagram/Threads CDN requires Referer + the same User-Agent used for
+        // the page fetch. The CDN URL's _nc_sid / session tokens are tied to the
+        // page-fetch session; mismatching the UA triggers a 403.
         let cdnHeaders: [String: String] = [
             "Referer": referer,
-            "User-Agent": userAgents[1],   // Chrome UA — works for CDN downloads
+            "User-Agent": pageUA,
+            "Accept": "video/mp4,video/webm,video/*;q=0.9,image/avif,image/webp,image/*;q=0.8,*/*;q=0.5",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://www.threads.net",
         ]
         let title = HTMLScraper.metaContent(html, property: "og:title")
         let thumb = HTMLScraper.metaContent(html, property: "og:image")
@@ -113,15 +126,33 @@ struct ThreadsResolver: MediaResolver {
 
         // 2. JSON key sweep for video — Threads embeds Instagram-style React
         //    state containing `video_url` / `playable_url` for video posts.
+        //    `playback_url` and `stream_url` appear in some Threads-specific
+        //    GraphQL responses; `clip_playback_url` is used for Threads Clips.
         let videoKeys = ["video_url", "playable_url", "playable_url_quality_hd",
-                         "videoUrl", "contentUrl"]
+                         "playback_url", "stream_url", "clip_playback_url",
+                         "videoUrl", "contentUrl", "browser_native_url"]
         for key in videoKeys {
             let hits = allDecoded(in: html, pattern: "\"\(key)\":\"([^\"]+)\"")
-            if let urlStr = hits.first, let videoURL = URL(string: urlStr) {
+            if let urlStr = hits.first(where: { !isNonMediaURL($0) }),
+               let videoURL = URL(string: urlStr) {
                 return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumb,
                                       isVideo: true, platform: .threads,
                                       requestHeaders: cdnHeaders)
             }
+        }
+
+        // 2b. video_versions array — Instagram / Threads sometimes stores
+        //     multiple renditions as an array of {"type":N,"url":"..."} objects.
+        //     Pick the first URL from that array.
+        let videoVersionsHits = allDecoded(
+            in: html,
+            pattern: #""video_versions"\s*:\s*\[[^\]]*?"url"\s*:\s*"([^"]+)""#
+        )
+        if let urlStr = videoVersionsHits.first(where: { !isNonMediaURL($0) }),
+           let videoURL = URL(string: urlStr) {
+            return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumb,
+                                  isVideo: true, platform: .threads,
+                                  requestHeaders: cdnHeaders)
         }
 
         // 3. <source src> and <video src> tags — some renders put the URL
@@ -234,10 +265,12 @@ struct ThreadsResolver: MediaResolver {
     }
 
     /// Fetch `url` trying each user agent in turn until one returns a 2xx/3xx.
-    /// Threads (and Instagram's infrastructure) blocks minimal header sets with
-    /// 403; a Googlebot UA is whitelisted for SEO, and a Chrome UA is a
-    /// realistic fallback. Full Accept / browser headers are sent every time.
-    private static func fetchHTML(_ url: URL) async throws -> String {
+    ///
+    /// Returns both the HTML body and the User-Agent string that succeeded.
+    /// The caller passes that UA into `extractMedia` so the same UA is used
+    /// for subsequent CDN media downloads — CDN URLs can carry session tokens
+    /// tied to the page-fetch UA, and mismatching causes 403.
+    private static func fetchHTML(_ url: URL) async throws -> (html: String, ua: String) {
         var lastError: Error = DownloadError.networkFailed("no user agent succeeded")
 
         for ua in userAgents {
@@ -262,7 +295,7 @@ struct ThreadsResolver: MediaResolver {
                 guard let html = String(data: data, encoding: .utf8) else {
                     throw DownloadError.resolutionFailed("non-UTF8 response.")
                 }
-                return html
+                return (html, ua)
             } catch let e as DownloadError {
                 throw e   // propagate non-HTTP errors immediately
             } catch {
