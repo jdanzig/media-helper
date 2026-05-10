@@ -153,7 +153,7 @@ struct SquarifyView: View {
         }
         // Keep the canvas square regardless of screen width.
         .aspectRatio(1, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(Rectangle())
         // Capture the actual display size so renderSquare can scale offsets
         // from display-point space to output-pixel space correctly.
         .background(
