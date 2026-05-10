@@ -7,8 +7,14 @@ import PhotosUI
 final class StitchViewModel: ObservableObject {
 
     @Published var pickerItems: [PhotosPickerItem] = [] {
-        didSet { Task { await loadImages() } }
+        didSet {
+            guard !suppressPickerReload else { return }
+            Task { await loadImages() }
+        }
     }
+    /// Set to true when removeImage mutates pickerItems directly so the
+    /// didSet observer skips the expensive full reload.
+    private var suppressPickerReload = false
     @Published private(set) var images: [UIImage] = []
     /// Stable per-image UUIDs that survive reordering, giving SwiftUI's
     /// ForEach a consistent identity so thumbnails animate as moves, not
@@ -58,6 +64,24 @@ final class StitchViewModel: ObservableObject {
                     ? "Couldn't render — check image sizes."
                     : "\(images.count) images • \(axis.label)."
             }
+        }
+    }
+
+    /// Remove a single image by index without re-fetching the remaining ones.
+    /// Also removes the corresponding PhotosPickerItem so the picker reflects
+    /// the current selection next time it opens.
+    func removeImage(at index: Int) {
+        guard images.indices.contains(index) else { return }
+        suppressPickerReload = true
+        pickerItems.remove(at: index)
+        suppressPickerReload = false
+        images.remove(at: index)
+        imageIDs.remove(at: index)
+        if images.isEmpty {
+            output = nil
+            status = "Pick images to stitch."
+        } else {
+            render()
         }
     }
 

@@ -109,21 +109,31 @@ struct StitchView: View {
                 ForEach(vm.imageIDs, id: \.self) { id in
                     let index = vm.imageIDs.firstIndex(of: id) ?? 0
                     let img   = index < vm.images.count ? vm.images[index] : UIImage()
-                    ZStack(alignment: .topLeading) {
-                        Image(uiImage: img)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 72, height: 72)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                        // Order badge
-                        Text("\(index + 1)")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.white)
-                            .padding(3)
-                            .background(.black.opacity(0.6), in: Circle())
-                            .padding(4)
-                    }
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 72, height: 72)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        // Order badge — top-left
+                        .overlay(alignment: .topLeading) {
+                            Text("\(index + 1)")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.white)
+                                .padding(3)
+                                .background(.black.opacity(0.6), in: Circle())
+                                .padding(4)
+                        }
+                        // Remove button — top-right
+                        .overlay(alignment: .topTrailing) {
+                            Button { vm.removeImage(at: index) } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.white, .black.opacity(0.65))
+                                    .font(.system(size: 18))
+                            }
+                            .buttonStyle(.plain)
+                            .offset(x: 5, y: -5)
+                        }
                     .opacity(draggingIndex == index ? 0.4 : 1)
                     .onDrag {
                         draggingIndex = index
