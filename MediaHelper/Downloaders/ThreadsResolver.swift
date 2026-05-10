@@ -3,19 +3,27 @@ import Foundation
 /// Threads resolver (threads.net / threads.com).
 ///
 /// Threads is built on Instagram's infrastructure and renders its posts
-/// server-side for logged-out visitors. The page HTML embeds React state
-/// that contains Instagram-style media fields. Strategy (tried in order):
+/// server-side for logged-out visitors **on threads.net**. The threads.com
+/// domain may serve a client-side-only shell that embeds no media data in
+/// the initial HTML, so all URLs are normalised to threads.net before fetching.
 ///
-///  1. **Main page** — `og:video` meta tags, then JSON key sweep for video
-///     (`video_url`, `playable_url`, …), then brute-force `.mp4` scan,
-///     then JSON key sweep for images (`display_url`, …), then brute-force
-///     CDN image scan, then `og:image` (only if not a profile picture).
+/// The page HTML embeds a React state blob with Instagram-style media fields.
+/// Strategy (tried in order):
 ///
-///  2. **Embed page** (`/t/<shortcode>/embed/`) — a lighter render that
+///  1. **threads.net main page** — `og:video`, then JSON key sweep for video
+///     (`video_url`, `playable_url`, …), `<source src>` / `<video src>` tags,
+///     brute-force `.mp4` scan, JSON key sweep for images (`display_url`, …),
+///     brute-force CDN image scan, `og:image` (only if not a static asset or
+///     profile picture).
+///
+///  2. **Embed page** (`/t/<shortcode>/embed/`) — a lighter server render that
 ///     sometimes exposes the video URL when the main page JS blob hides it.
 ///
-/// Profile-picture URLs (Instagram CDN asset type `t51.2885-19`) are
-/// filtered out so a photo post doesn't silently download the avatar.
+/// Non-media CDN URLs are filtered throughout:
+///   - `static.cdninstagram.com` — Meta's static UI assets (logos, icons)
+///   - `rsrc.php` — Facebook's static resource CDN
+///   - Instagram profile-picture asset type `t51.2885-19`
+///   - Small fixed-size avatars (`/s150x150/`, `/s320x320/`)
 ///
 /// Private posts require login — surfaced as a clear error.
 ///
@@ -31,8 +39,12 @@ struct ThreadsResolver: MediaResolver {
         "(KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
     func resolve(_ url: URL) async throws -> ResolverResult {
-        // 1. Main page scrape.
-        if let result = try? await resolveViaPage(url) { return result }
+        // Always fetch from threads.net — threads.com may be client-side only
+        // and not embed media data in the initial HTML response.
+        let netURL = Self.toThreadsNet(url)
+
+        // 1. Main page (threads.net).
+        if let result = try? await resolveViaPage(netURL) { return result }
 
         // 2. Embed page.
         if let sc = Self.extractShortcode(from: url),
@@ -92,7 +104,22 @@ struct ThreadsResolver: MediaResolver {
             }
         }
 
-        // 3. Brute-force .mp4 scan — catches markup changes where key names shift.
+        // 3. <source src> and <video src> tags — some renders put the URL
+        //    directly in HTML video elements rather than React state.
+        let srcPatterns = [
+            #"<source[^>]+src=["']([^"']+\.mp4[^"']*)["']"#,
+            #"<video[^>]+src=["']([^"']+\.mp4[^"']*)["']"#,
+            #"<source[^>]+src=["'](https?://[^"']+)["'][^>]+type=["']video"#,
+        ]
+        for pattern in srcPatterns {
+            let hits = allDecoded(in: html, pattern: pattern)
+            if let urlStr = hits.first, let videoURL = URL(string: urlStr) {
+                return ResolverResult(mediaURL: videoURL, title: title,
+                                      thumbnailURL: thumb, isVideo: true, platform: .threads)
+            }
+        }
+
+        // 4. Brute-force .mp4 scan — catches markup changes where key names shift.
         let mp4Hits = allDecoded(in: html,
                                  pattern: #"(https?://[^"'<\s\\]+\.mp4[^"'<\s\\]*)"#)
         if let urlStr = mp4Hits.first, let videoURL = URL(string: urlStr) {
@@ -100,33 +127,32 @@ struct ThreadsResolver: MediaResolver {
                                   thumbnailURL: thumb, isVideo: true, platform: .threads)
         }
 
-        // 4. JSON key sweep for post images. We scan ALL occurrences of each
-        //    key and skip any URL that looks like a profile picture (CDN asset
-        //    type t51.2885-19) so we don't accidentally download the avatar.
+        // 5. JSON key sweep for post images. We scan ALL occurrences of each
+        //    key and skip any URL that looks like a static asset or profile pic.
         let imageKeys = ["display_url", "image_url", "thumbnail_url"]
         for key in imageKeys {
             let hits = allDecoded(in: html, pattern: "\"\(key)\":\"([^\"]+)\"")
-            if let urlStr = hits.first(where: { !isProfilePicURL($0) }),
+            if let urlStr = hits.first(where: { !isNonMediaURL($0) }),
                let imageURL = URL(string: urlStr) {
                 return ResolverResult(mediaURL: imageURL, title: title,
                                       thumbnailURL: imageURL, isVideo: false, platform: .threads)
             }
         }
 
-        // 5. Brute-force CDN image scan — any non-profile-pic image URL.
+        // 6. Brute-force CDN image scan — user-content CDN only, non-static assets.
+        //    Restricts to scontent* hosts (user uploads) to avoid logos/icons.
         let imgHits = allDecoded(
             in: html,
-            pattern: #"(https?://[^"'<\s\\]+\.(?:jpg|jpeg|png|webp)[^"'<\s\\]*)"#
+            pattern: #"(https?://scontent[^"'<\s\\]+\.(?:jpg|jpeg|png|webp)[^"'<\s\\]*)"#
         )
-        if let urlStr = imgHits.first(where: { !isProfilePicURL($0) }),
+        if let urlStr = imgHits.first(where: { !isNonMediaURL($0) }),
            let imageURL = URL(string: urlStr) {
             return ResolverResult(mediaURL: imageURL, title: title,
                                   thumbnailURL: imageURL, isVideo: false, platform: .threads)
         }
 
-        // 6. og:image fallback — only if it doesn't look like a profile picture.
-        //    og:image is sometimes the avatar rather than the post media.
-        if let imageURL = thumb, !isProfilePicURL(imageURL.absoluteString) {
+        // 7. og:image fallback — only if it looks like user content, not a logo.
+        if let imageURL = thumb, !isNonMediaURL(imageURL.absoluteString) {
             return ResolverResult(mediaURL: imageURL, title: title,
                                   thumbnailURL: imageURL, isVideo: false, platform: .threads)
         }
@@ -137,7 +163,7 @@ struct ThreadsResolver: MediaResolver {
     // MARK: - Extraction helpers
 
     /// Return the decoded value of every occurrence of the first capture group
-    /// across all regex matches in `html`. Applying `decodeJSONString` to each.
+    /// across all regex matches in `html`, with JSON-string decoding applied.
     private static func allDecoded(in html: String, pattern: String) -> [String] {
         guard let re = try? NSRegularExpression(pattern: pattern,
                                                 options: .caseInsensitive) else { return [] }
@@ -149,11 +175,19 @@ struct ThreadsResolver: MediaResolver {
         }
     }
 
-    /// True for CDN URLs that look like profile pictures rather than post media.
-    /// Instagram/Threads profile pics use asset type `t51.2885-19`; they're also
-    /// often served at small fixed sizes (`/s150x150/`, `/s320x320/`).
-    private static func isProfilePicURL(_ url: String) -> Bool {
-        url.contains("t51.2885-19")
+    /// True for CDN URLs that are static UI assets or profile pictures rather
+    /// than user-uploaded post media.
+    ///
+    /// - `static.cdninstagram.com` — Meta's static CDN for logos, icons, and
+    ///   other UI assets. User content lives on `scontent*.cdninstagram.com`.
+    /// - `rsrc.php` — Facebook's static resource CDN path (JS, CSS, images).
+    /// - `t51.2885-19` — Instagram/Threads CDN asset type for profile pictures.
+    /// - Small fixed-size paths — avatars are typically served at `/s150x150/`
+    ///   or `/s320x320/`; post media is served at full resolution.
+    private static func isNonMediaURL(_ url: String) -> Bool {
+        url.contains("static.cdninstagram.com")   // UI logos / icons
+        || url.contains("rsrc.php")               // Facebook static resources
+        || url.contains("t51.2885-19")            // profile-picture asset type
         || url.contains("profile_pic")
         || url.contains("profile_pics")
         || url.contains("/s150x150/")
@@ -161,6 +195,15 @@ struct ThreadsResolver: MediaResolver {
     }
 
     // MARK: - Helpers
+
+    /// Rewrite a threads.com URL to its threads.net equivalent.
+    /// threads.com may render client-side only (no media data in initial HTML);
+    /// threads.net SSR-renders the React state blob that contains media URLs.
+    private static func toThreadsNet(_ url: URL) -> URL {
+        let s = url.absoluteString
+        guard s.contains("threads.com") else { return url }
+        return URL(string: s.replacingOccurrences(of: "threads.com", with: "threads.net")) ?? url
+    }
 
     private static func fetchHTML(_ url: URL) async throws -> String {
         var req = URLRequest(url: url)
