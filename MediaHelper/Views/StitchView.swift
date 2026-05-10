@@ -10,6 +10,8 @@ struct StitchView: View {
     @StateObject private var vm = StitchViewModel()
     /// Index of the thumbnail currently being dragged (nil when idle).
     @State private var draggingIndex: Int? = nil
+    /// Index of the thumbnail the drag is currently hovering over.
+    @State private var hoveringIndex: Int? = nil
 
     var body: some View {
         NavigationStack {
@@ -135,6 +137,13 @@ struct StitchView: View {
                             .offset(x: 5, y: -5)
                         }
                     .opacity(draggingIndex == index ? 0.4 : 1)
+                    // Highlight the slot where the dragged item will land.
+                    .overlay {
+                        if hoveringIndex == index && draggingIndex != index {
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(.tint, lineWidth: 2.5)
+                        }
+                    }
                     .onDrag {
                         draggingIndex = index
                         return NSItemProvider(object: NSString(string: "\(index)"))
@@ -144,6 +153,7 @@ struct StitchView: View {
                         delegate: ImageDropDelegate(
                             targetIndex: index,
                             dragging: $draggingIndex,
+                            hovering: $hoveringIndex,
                             viewModel: vm
                         )
                     )
@@ -153,31 +163,33 @@ struct StitchView: View {
         }
         .frame(height: 88)
         // Clear drag state if the user picks a completely new set of images.
-        .onChange(of: vm.imageIDs) { draggingIndex = nil }
+        .onChange(of: vm.imageIDs) { draggingIndex = nil; hoveringIndex = nil }
     }
 }
 
 // MARK: - Drop delegate
 
-/// Handles live reordering as the dragged thumbnail crosses over its neighbours.
+/// Commits the reorder when the drag is released.
+///
+/// Reordering used to happen live in dropEntered, but calling moveImage()
+/// there triggers a SwiftUI re-render which re-lays-out the HStack mid-drag.
+/// That scrambles the drop zones so the gesture ends after just one step —
+/// the "only moves by one" bug.  By doing nothing to the data during the
+/// drag and committing only in performDrop, the layout stays stable for the
+/// full gesture, so the item lands wherever the user actually releases it.
 @MainActor
 private struct ImageDropDelegate: DropDelegate {
     let targetIndex: Int
     @Binding var dragging: Int?
+    @Binding var hovering: Int?
     let viewModel: StitchViewModel
 
-    /// Fires each time the drag position enters this thumbnail's frame.
-    /// We immediately move the item so the strip re-orders live during the drag.
     func dropEntered(info: DropInfo) {
-        guard let from = dragging, from != targetIndex else { return }
-        withAnimation(.default) {
-            viewModel.moveImage(
-                from: IndexSet(integer: from),
-                to: targetIndex > from ? targetIndex + 1 : targetIndex
-            )
-        }
-        // Update tracking index to the new position.
-        dragging = targetIndex
+        hovering = targetIndex
+    }
+
+    func dropExited(info: DropInfo) {
+        if hovering == targetIndex { hovering = nil }
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
@@ -185,7 +197,12 @@ private struct ImageDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        dragging = nil
+        defer { dragging = nil; hovering = nil }
+        guard let from = dragging, from != targetIndex else { return true }
+        viewModel.moveImage(
+            from: IndexSet(integer: from),
+            to: targetIndex > from ? targetIndex + 1 : targetIndex
+        )
         return true
     }
 }
