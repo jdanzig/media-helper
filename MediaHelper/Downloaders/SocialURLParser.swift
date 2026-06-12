@@ -129,6 +129,8 @@ struct SocialURLParser {
             return .threads
         case "streamable.com":
             return .streamable
+        case "vimeo.com", "player.vimeo.com":
+            return .vimeo
         default:
             return .unknown
         }

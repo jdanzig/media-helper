@@ -64,7 +64,8 @@ final class DownloadViewModel: ObservableObject {
         .instagram: InstagramResolver(),
         .facebook:    FacebookResolver(),
         .threads:     ThreadsResolver(),
-        .streamable:  StreamableResolver()
+        .streamable:  StreamableResolver(),
+        .vimeo:       VimeoResolver()
     ]
     private let downloader = MediaDownloader()
 

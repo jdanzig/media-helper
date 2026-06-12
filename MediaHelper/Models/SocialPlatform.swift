@@ -12,6 +12,7 @@ enum SocialPlatform: String, CaseIterable, Identifiable, Hashable {
     case facebook
     case threads
     case streamable
+    case vimeo
     case unknown
 
     var id: String { rawValue }
@@ -26,6 +27,7 @@ enum SocialPlatform: String, CaseIterable, Identifiable, Hashable {
         case .facebook:  return "Facebook"
         case .threads:    return "Threads"
         case .streamable: return "Streamable"
+        case .vimeo:      return "Vimeo"
         case .unknown:    return "Unknown"
         }
     }
@@ -40,6 +42,7 @@ enum SocialPlatform: String, CaseIterable, Identifiable, Hashable {
         case .facebook:  return "f.square.fill"
         case .threads:    return "bubble.left.and.bubble.right.fill"
         case .streamable: return "play.circle.fill"
+        case .vimeo:      return "v.circle.fill"
         case .unknown:    return "questionmark.circle"
         }
     }

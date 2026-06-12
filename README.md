@@ -11,7 +11,7 @@ A personal iOS utility for downloading social media content, transcribing videos
 
 ### Download
 
-Paste a URL from YouTube, X/Twitter, TikTok, Instagram, Facebook, Threads, or Streamable. The app downloads the media (including Instagram carousels) and optionally runs transcription on it. Downloaded files can be shared or saved directly to Photos.
+Paste a URL from YouTube, X/Twitter, TikTok, Instagram, Facebook, Threads, Streamable, or Vimeo. The app downloads the media (including Instagram carousels) and optionally runs transcription on it. Downloaded files can be shared or saved directly to Photos.
 
 ### Transcribe
 
