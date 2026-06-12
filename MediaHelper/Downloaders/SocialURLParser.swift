@@ -127,6 +127,8 @@ struct SocialURLParser {
             return .facebook
         case "threads.net", "threads.com":
             return .threads
+        case "streamable.com":
+            return .streamable
         default:
             return .unknown
         }

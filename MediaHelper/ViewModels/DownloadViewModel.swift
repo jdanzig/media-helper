@@ -62,8 +62,9 @@ final class DownloadViewModel: ObservableObject {
         .twitter:   TwitterResolver(),
         .tiktok:    TikTokResolver(),
         .instagram: InstagramResolver(),
-        .facebook:  FacebookResolver(),
-        .threads:   ThreadsResolver()
+        .facebook:    FacebookResolver(),
+        .threads:     ThreadsResolver(),
+        .streamable:  StreamableResolver()
     ]
     private let downloader = MediaDownloader()
 
