@@ -69,6 +69,24 @@ struct TranscribeView: View {
 
     // MARK: - Subviews
 
+    private struct StepInfo {
+        let phase: TranscriptionPipeline.Phase
+        let label: String
+    }
+
+    // Steps expected for the current selections. Stable during a run
+    // because the Start button is disabled while one is in progress.
+    private var runSteps: [StepInfo] {
+        let opts = vm.selections.toTranscriptionOptions()
+        var s: [StepInfo] = [
+            .init(phase: .extractingAudio, label: "Extract audio"),
+            .init(phase: .transcribing,    label: "Transcribe"),
+        ]
+        if opts.burnInSubtitles { s.append(.init(phase: .burningSubtitles, label: "Burn subtitles")) }
+        s.append(.init(phase: .savingFiles, label: "Save"))
+        return s
+    }
+
     @ViewBuilder
     private var statusView: some View {
         switch vm.phase {
@@ -77,17 +95,72 @@ struct TranscribeView: View {
                 .font(.footnote).foregroundStyle(.secondary)
         case .loadingVideo:
             Text("Loading video…").font(.footnote).foregroundStyle(.secondary)
-        case .running(let phase, let frac):
-            Text(phase.label).font(.footnote).foregroundStyle(.secondary)
-            ProgressView(value: frac)
-            Text("\(Int(frac * 100))%").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+        case .running(let activePhase, let frac):
+            pipelineStepList(active: activePhase, fraction: frac)
         case .done:
-            Label("Done — outputs below.", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+            pipelineStepList(active: nil, fraction: 1.0)
         case .failed(let msg):
             Label(msg, systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
                 .font(.footnote)
+        }
+    }
+
+    @ViewBuilder
+    private func pipelineStepList(active: TranscriptionPipeline.Phase?,
+                                   fraction: Double) -> some View {
+        let order: [TranscriptionPipeline.Phase] = [
+            .extractingAudio, .transcribing, .burningSubtitles, .savingFiles
+        ]
+        let activeIdx = active.flatMap { order.firstIndex(of: $0) } ?? Int.max
+
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(runSteps.enumerated()), id: \.offset) { _, step in
+                let stepIdx  = order.firstIndex(of: step.phase) ?? 0
+                let isDone   = stepIdx < activeIdx
+                let isActive = stepIdx == activeIdx
+                let iconName: String = isDone   ? "checkmark.circle.fill"
+                                     : isActive ? "circle.fill"
+                                     :            "circle"
+                let iconColor: Color = isDone   ? .green
+                                     : isActive ? .accentColor
+                                     :            Color(.tertiaryLabel)
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: iconName)
+                        .foregroundStyle(iconColor)
+                        .frame(width: 20)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(step.label)
+                            .opacity(isDone || isActive ? 1.0 : 0.4)
+
+                        if isActive {
+                            if let pct = stepFraction(step.phase, global: fraction) {
+                                ProgressView(value: pct)
+                                Text("\(Int(pct * 100))%")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Returns a 0–1 fraction for the active step's own progress bar.
+    // extractingAudio and savingFiles are too short to show a meaningful
+    // bar, so they get an indeterminate spinner (nil).
+    private func stepFraction(_ phase: TranscriptionPipeline.Phase,
+                               global: Double) -> Double? {
+        switch phase {
+        case .extractingAudio:  return nil
+        case .transcribing:     return min(max(global - 0.10, 0) / 0.60, 1.0)
+        case .burningSubtitles: return min(max(global - 0.70, 0) / 0.25, 1.0)
+        case .savingFiles:      return nil
+        case .done:             return nil
         }
     }
 
