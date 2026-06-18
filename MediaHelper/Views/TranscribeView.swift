@@ -8,8 +8,7 @@ import PhotosUI
 @MainActor
 struct TranscribeView: View {
     @StateObject private var vm = TranscribeViewModel()
-    @State private var shareItems: [URL] = []
-    @State private var isSharePresented = false
+    @State private var shareFile: ShareFile? = nil
 
     var body: some View {
         NavigationStack {
@@ -62,8 +61,8 @@ struct TranscribeView: View {
                 }
             }
             .navigationTitle("Transcribe")
-            .sheet(isPresented: $isSharePresented) {
-                ShareSheet(items: shareItems)
+            .sheet(item: $shareFile) { file in
+                ShareSheet(items: [file.url])
             }
         }
     }
@@ -104,16 +103,14 @@ struct TranscribeView: View {
         }
         if let srt = o.subtitleFileURL {
             Button {
-                shareItems = [srt]
-                isSharePresented = true
+                shareFile = ShareFile(url: srt)
             } label: {
                 Label("Share .srt file", systemImage: "square.and.arrow.up")
             }
         }
         if let txt = o.transcriptFileURL {
             Button {
-                shareItems = [txt]
-                isSharePresented = true
+                shareFile = ShareFile(url: txt)
             } label: {
                 Label("Share transcript (.txt)", systemImage: "square.and.arrow.up")
             }
@@ -127,6 +124,16 @@ struct TranscribeView: View {
         default: return true
         }
     }
+}
+
+/// Identifiable wrapper so a URL can be used with `.sheet(item:)`.
+/// Using `.sheet(item:)` guarantees the sheet content is always built
+/// with the correct URL — unlike `.sheet(isPresented:)` + a separate
+/// items array, which can race if SwiftUI evaluates the content closure
+/// before the companion state update lands, producing a blank share sheet.
+struct ShareFile: Identifiable {
+    let id = UUID()
+    let url: URL
 }
 
 /// Thin UIViewControllerRepresentable wrapper around `UIActivityViewController`.
