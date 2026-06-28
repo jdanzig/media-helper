@@ -26,12 +26,15 @@ struct InstagramResolver: MediaResolver {
     /// Instagram rotates this periodically — update it when pass 1 starts
     /// returning empty `data` objects. Cross-reference with:
     /// github.com/ahmedrangel/instagram-media-scraper
+    /// ⚠️  CURRENTLY BROKEN (2026-06): all known doc_ids return execution errors.
+    ///     The embed-page path (pass 3) is the active working fallback.
+    ///     Update doc_id and lsdToken together when GraphQL comes back online.
     private static let graphqlDocID = "10015901848480474"
 
     /// LSD token required by Instagram's GraphQL gateway.
     /// Same value used across all unauthenticated requests (static enough
     /// to hardcode; refresh alongside graphqlDocID if needed).
-    private static let lsdToken = "AVqbxe3J_YA"
+    private static let lsdToken = "AdRajKE-dbL5DFDu4y87RHQZaXA"
 
     /// Instagram's public web app ID. Present in every IG web request;
     /// not a secret — it's embedded in their public JavaScript bundle.
@@ -476,9 +479,19 @@ struct InstagramResolver: MediaResolver {
     /// Scan for `"key":"…"` in a JSON-in-HTML blob, decoding the common
     /// Instagram escape sequences: `\u0026` (ampersand), `\/`, `\u0022`.
     private static func extractEscapedString(html: String, key: String) -> String? {
-        guard let raw = HTMLScraper.firstCaptureGroup(
+        // Form 1: "key":"value" (plain JSON)
+        if let raw = HTMLScraper.firstCaptureGroup(
             in: html, pattern: "\"\(key)\":\"([^\"]+)\""
-        ) else { return nil }
-        return decodeJSONString(raw)
+        ) {
+            return decodeJSONString(raw)
+        }
+        // Form 2: \"key\":\"value\"  (doubly-escaped JSON-in-JS; embed page since ~2025)
+        // NSRegularExpression \\" = match one literal backslash + one quote in text.
+        // Lazy [^"]+? stops at the closing \" without consuming its backslash.
+        let p2 = "\\\\\"\(key)\\\\\":\\\\\"([^\"]+?)\\\\\""
+        if let raw = HTMLScraper.firstCaptureGroup(in: html, pattern: p2) {
+            return decodeJSONString(decodeJSONString(raw))
+        }
+        return nil
     }
 }
