@@ -94,18 +94,11 @@ struct InstagramResolver: MediaResolver {
             return result
         }
 
-        // 3. Embed endpoint (`…/embed/captioned`). A `loginRequired` thrown
-        //    here is actionable and must reach the user — don't let `try?`
-        //    swallow it. Any other error just falls through to pass 4.
-        if let sc = shortcode {
-            do {
-                let result = try await resolveViaEmbed(shortcode: sc)
-                if result.isVideo { return result }
-            } catch DownloadError.loginRequired(let p) {
-                throw DownloadError.loginRequired(p)
-            } catch {
-                // Non-actionable — try the next strategy.
-            }
+        // 3. Embed endpoint (`…/embed/captioned`).
+        if let sc = shortcode,
+           let result = try? await resolveViaEmbed(shortcode: sc),
+           result.isVideo {
+            return result
         }
 
         // 4. Canonical page with the IG iOS app UA.
@@ -114,14 +107,25 @@ struct InstagramResolver: MediaResolver {
             return result
         }
 
-        // 5. Give up. Refuse to silently hand back the thumbnail when
-        //    the user pasted a URL whose path means "video" — they
-        //    expect a video. Photo-only paths (/p/) get the image.
+        // 5. Unauthenticated surfaces exhausted. If the user has stored a
+        //    session cookie, hit Instagram's private API — the only surface
+        //    that honours the cookie — to unlock login-gated posts. We only
+        //    reach here after the cookie-free passes failed, so public posts
+        //    never send the cookie.
+        if let sc = shortcode, let sid = KeychainStore.load(.instagramSessionCookie) {
+            if let result = try? await resolveViaPrivateAPI(shortcode: sc, sessionID: sid),
+               result.isVideo || !pathIsVideo {
+                return result
+            }
+            // Cookie present but the authenticated fetch still failed — it's
+            // almost certainly expired or invalid. Tell the user to refresh it.
+            throw DownloadError.loginRequired(.instagram)
+        }
+
+        // 6. No cookie stored. A video path with nothing found is, in practice,
+        //    a login-gated post — point the user at the cookie setting.
         if pathIsVideo {
-            throw DownloadError.resolutionFailed(
-                "couldn't find a public video URL on the Reel page. Instagram may " +
-                "be requiring login for this post, or the markup just shifted again."
-            )
+            throw DownloadError.loginRequired(.instagram)
         }
 
         // For /p/ paths, try GraphQL for the image too before falling back.
@@ -267,18 +271,19 @@ struct InstagramResolver: MediaResolver {
 
     // MARK: - Embed path
 
-    private func resolveViaEmbed(shortcode: String, sessionID: String? = nil) async throws -> ResolverResult {
+    private func resolveViaEmbed(shortcode: String) async throws -> ResolverResult {
         guard let embedURL = URL(string: "https://www.instagram.com/p/\(shortcode)/embed/captioned/") else {
             throw DownloadError.resolutionFailed("couldn't build embed URL.")
         }
 
+        // The embed/captioned surface is logged-out-only: it never honours a
+        // session cookie, so we don't send one here. It just decides per-post
+        // whether to inline the video based on the post's sensitivity. Gated
+        // posts fall through to the authenticated private API in `resolve()`.
         var req = URLRequest(url: embedURL)
         req.timeoutInterval = 15
         req.setValue(Self.desktopUserAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
-        if let sid = sessionID {
-            req.setValue("sessionid=\(sid)", forHTTPHeaderField: "Cookie")
-        }
 
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<400).contains(http.statusCode) else {
@@ -332,17 +337,104 @@ struct InstagramResolver: MediaResolver {
             )
         }
 
-        // If the embed page served no media and signals a logged-out session,
-        // Instagram is gating this post behind authentication. Retry once with
-        // the stored session cookie if we haven't already.
-        if html.contains("is_logged_out_user") && sessionID == nil,
-           let storedID = KeychainStore.load(.instagramSessionCookie) {
-            return try await resolveViaEmbed(shortcode: shortcode, sessionID: storedID)
+        // No media on the embed page — the post is either gated or the markup
+        // shifted. Fall through; `resolve()` will try the authenticated private
+        // API (which honours the session cookie) before deciding it's gated.
+        throw DownloadError.resolutionFailed("embed page had no media fields.")
+    }
+
+    // MARK: - Authenticated private API (login-gated posts)
+
+    /// Fetch a single post through Instagram's private media-info API using the
+    /// user's `sessionid`. Unlike the embed/OpenGraph surfaces, this endpoint
+    /// honours the session cookie, so it's the path that unlocks sensitivity-
+    /// gated posts. A non-2xx response (typically a 401/403 or a login
+    /// redirect) means the cookie is missing/expired → surfaced as loginRequired.
+    private func resolveViaPrivateAPI(shortcode: String,
+                                      sessionID: String) async throws -> ResolverResult {
+        guard let mediaID = Self.mediaID(fromShortcode: shortcode) else {
+            throw DownloadError.resolutionFailed("couldn't derive media id from shortcode.")
         }
-        if html.contains("is_logged_out_user") {
+        guard let endpoint = URL(string: "https://www.instagram.com/api/v1/media/\(mediaID)/info/") else {
+            throw DownloadError.resolutionFailed("couldn't build private API URL.")
+        }
+
+        var req = URLRequest(url: endpoint)
+        req.timeoutInterval = 15
+        req.setValue(Self.desktopUserAgent,        forHTTPHeaderField: "User-Agent")
+        req.setValue(Self.igAppID,                 forHTTPHeaderField: "X-IG-App-ID")
+        req.setValue("en-US,en;q=0.9",             forHTTPHeaderField: "Accept-Language")
+        req.setValue("https://www.instagram.com/", forHTTPHeaderField: "Referer")
+        req.setValue("sessionid=\(sessionID)",     forHTTPHeaderField: "Cookie")
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw DownloadError.networkFailed("IG private API: no HTTP response.")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            // 401/403/302-to-login → the session isn't valid for this fetch.
             throw DownloadError.loginRequired(.instagram)
         }
-        throw DownloadError.resolutionFailed("embed page had no media fields.")
+        guard let json  = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = json["items"] as? [[String: Any]],
+              let item  = items.first else {
+            throw DownloadError.resolutionFailed("private API: unexpected response shape.")
+        }
+        return try Self.result(fromMediaItem: item)
+    }
+
+    /// Build a `ResolverResult` from a private-API media item, preferring the
+    /// highest-quality video. For carousels we descend into the first child.
+    private static func result(fromMediaItem item: [String: Any]) throws -> ResolverResult {
+        let username = (item["user"] as? [String: Any])?["username"] as? String
+        let title    = username.map { "@\($0)" }
+
+        // Carousel/sidecar — first child carries the media arrays.
+        let node: [String: Any]
+        if let carousel = item["carousel_media"] as? [[String: Any]], let first = carousel.first {
+            node = first
+        } else {
+            node = item
+        }
+
+        var thumbURL: URL?
+        if let iv2        = node["image_versions2"] as? [String: Any],
+           let candidates = iv2["candidates"]       as? [[String: Any]],
+           let urlStr     = candidates.first?["url"] as? String {
+            thumbURL = URL(string: urlStr)
+        }
+
+        if let videos   = node["video_versions"] as? [[String: Any]],
+           let urlStr   = videos.first?["url"] as? String,
+           let videoURL = URL(string: urlStr) {
+            return ResolverResult(mediaURL: videoURL, title: title, thumbnailURL: thumbURL,
+                                  isVideo: true, platform: .instagram)
+        }
+
+        if let imageURL = thumbURL {
+            return ResolverResult(mediaURL: imageURL, title: title, thumbnailURL: imageURL,
+                                  isVideo: false, platform: .instagram)
+        }
+
+        throw DownloadError.resolutionFailed("private API: media item had no URL.")
+    }
+
+    /// Convert an Instagram shortcode to its numeric media id (PK). Shortcodes
+    /// are a base64 (URL-safe alphabet) encoding of the media's primary key.
+    /// Returns nil on a stray character or if the value exceeds 64 bits.
+    static func mediaID(fromShortcode shortcode: String) -> String? {
+        let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        var id: UInt64 = 0
+        for ch in shortcode {
+            guard let idx = alphabet.firstIndex(of: ch) else { return nil }
+            let value = UInt64(alphabet.distance(from: alphabet.startIndex, to: idx))
+            let (mult, o1) = id.multipliedReportingOverflow(by: 64)
+            guard !o1 else { return nil }
+            let (sum, o2) = mult.addingReportingOverflow(value)
+            guard !o2 else { return nil }
+            id = sum
+        }
+        return String(id)
     }
 
     // MARK: - OpenGraph fallback
