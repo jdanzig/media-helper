@@ -355,17 +355,18 @@ struct InstagramResolver: MediaResolver {
         guard let mediaID = Self.mediaID(fromShortcode: shortcode) else {
             throw DownloadError.resolutionFailed("couldn't derive media id from shortcode.")
         }
-        guard let endpoint = URL(string: "https://www.instagram.com/api/v1/media/\(mediaID)/info/") else {
+        // Must be the mobile API host (i.instagram.com) with the IG app UA —
+        // www.instagram.com/api/v1 redirect-loops on authenticated requests.
+        guard let endpoint = URL(string: "https://i.instagram.com/api/v1/media/\(mediaID)/info/") else {
             throw DownloadError.resolutionFailed("couldn't build private API URL.")
         }
 
         var req = URLRequest(url: endpoint)
         req.timeoutInterval = 15
-        req.setValue(Self.desktopUserAgent,        forHTTPHeaderField: "User-Agent")
-        req.setValue(Self.igAppID,                 forHTTPHeaderField: "X-IG-App-ID")
-        req.setValue("en-US,en;q=0.9",             forHTTPHeaderField: "Accept-Language")
-        req.setValue("https://www.instagram.com/", forHTTPHeaderField: "Referer")
-        req.setValue("sessionid=\(sessionID)",     forHTTPHeaderField: "Cookie")
+        req.setValue(Self.appUserAgent,        forHTTPHeaderField: "User-Agent")
+        req.setValue(Self.igAppID,             forHTTPHeaderField: "X-IG-App-ID")
+        req.setValue("3brTvw==",               forHTTPHeaderField: "X-IG-Capabilities")
+        req.setValue("sessionid=\(sessionID)", forHTTPHeaderField: "Cookie")
 
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse else {
