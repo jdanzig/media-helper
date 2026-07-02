@@ -35,6 +35,8 @@ enum DownloadError: LocalizedError {
     case resolutionFailed(String)
     case networkFailed(String)
     case saveFailed(String)
+    /// The platform requires a login session to serve this post's media.
+    case loginRequired(SocialPlatform)
 
     var errorDescription: String? {
         switch self {
@@ -48,6 +50,8 @@ enum DownloadError: LocalizedError {
             return "Network problem: \(why)"
         case .saveFailed(let why):
             return "Couldn't save to Photos: \(why)"
+        case .loginRequired(let p):
+            return "\(p.displayName) requires login for this post. Add your session cookie in Settings → Instagram."
         }
     }
 }

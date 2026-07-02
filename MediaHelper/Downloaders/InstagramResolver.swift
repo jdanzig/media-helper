@@ -174,6 +174,9 @@ struct InstagramResolver: MediaResolver {
         req.setValue("https://www.instagram.com",          forHTTPHeaderField: "Origin")
         req.setValue("https://www.instagram.com/",         forHTTPHeaderField: "Referer")
         req.setValue("en-US,en;q=0.9",                     forHTTPHeaderField: "Accept-Language")
+        if let sessionID = KeychainStore.load(.instagramSessionCookie) {
+            req.setValue("sessionid=\(sessionID)", forHTTPHeaderField: "Cookie")
+        }
 
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -322,6 +325,11 @@ struct InstagramResolver: MediaResolver {
             )
         }
 
+        // If the embed page served no media at all and signals a logged-out
+        // session, Instagram is gating this post behind authentication.
+        if html.contains("is_logged_out_user") {
+            throw DownloadError.loginRequired(.instagram)
+        }
         throw DownloadError.resolutionFailed("embed page had no media fields.")
     }
 
@@ -417,6 +425,9 @@ struct InstagramResolver: MediaResolver {
         req.timeoutInterval = 15
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        if let sessionID = KeychainStore.load(.instagramSessionCookie) {
+            req.setValue("sessionid=\(sessionID)", forHTTPHeaderField: "Cookie")
+        }
 
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<400).contains(http.statusCode) else {

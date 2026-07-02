@@ -11,8 +11,9 @@ enum KeychainStore {
     /// Namespaces we store under. Keep this small — each case is one
     /// keychain item.
     enum Item: String, CaseIterable {
-        case openAIAPIKey    = "openai.apiKey"
-        case assemblyAIAPIKey = "assemblyai.apiKey"
+        case openAIAPIKey         = "openai.apiKey"
+        case assemblyAIAPIKey     = "assemblyai.apiKey"
+        case instagramSessionCookie = "instagram.sessionCookie"
     }
 
     private static let service = "com.example.MediaHelper.keys"

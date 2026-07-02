@@ -22,12 +22,40 @@ struct SettingsView: View {
                            onSave: vm.saveOpenAIKey,
                            onClear: vm.clearOpenAIKey)
 
-                keySection(title: "AssemblyAI",
-                           tagline: "Required for the “AssemblyAI” backend (includes speaker labels).",
+                keySection(title: “AssemblyAI”,
+                           tagline: “Required for the “AssemblyAI” backend (includes speaker labels).”,
                            hasKey: vm.hasAssemblyAIKey,
                            input: $vm.assemblyAIKeyInput,
                            onSave: vm.saveAssemblyAIKey,
                            onClear: vm.clearAssemblyAIKey)
+
+                Section(header: Text(“Instagram”)) {
+                    Text(“Some posts are restricted to logged-in users. Paste your sessionid cookie here to unlock them. Get it from Instagram.com → DevTools → Application → Cookies.”)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    if vm.hasInstagramCookie {
+                        HStack {
+                            Image(systemName: “checkmark.seal.fill”).foregroundStyle(.green)
+                            Text(“Cookie saved”)
+                            Spacer()
+                            Button(“Remove”, role: .destructive, action: vm.clearInstagramCookie)
+                                .buttonStyle(.borderless)
+                        }
+                    }
+
+                    TextField(vm.hasInstagramCookie ? “Replace sessionid (optional)” : “sessionid value”,
+                              text: $vm.instagramCookieInput)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    Button {
+                        vm.saveInstagramCookie()
+                    } label: {
+                        Label(vm.hasInstagramCookie ? “Replace” : “Save”, systemImage: “square.and.arrow.down”)
+                    }
+                    .disabled(vm.instagramCookieInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
             }
             .navigationTitle("Settings")
             .onAppear { vm.reload() }

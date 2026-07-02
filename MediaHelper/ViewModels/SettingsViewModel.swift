@@ -9,9 +9,11 @@ final class SettingsViewModel: ObservableObject {
 
     @Published var openAIKeyInput: String = ""
     @Published var assemblyAIKeyInput: String = ""
+    @Published var instagramCookieInput: String = ""
 
     @Published private(set) var hasOpenAIKey: Bool = false
     @Published private(set) var hasAssemblyAIKey: Bool = false
+    @Published private(set) var hasInstagramCookie: Bool = false
 
     init() {
         // Values are loaded in SettingsView's .onAppear — nothing blocking here.
@@ -22,8 +24,10 @@ final class SettingsViewModel: ObservableObject {
     func reload() {
         hasOpenAIKey = KeychainStore.hasValue(for: .openAIAPIKey)
         hasAssemblyAIKey = KeychainStore.hasValue(for: .assemblyAIAPIKey)
+        hasInstagramCookie = KeychainStore.hasValue(for: .instagramSessionCookie)
         openAIKeyInput = ""
         assemblyAIKeyInput = ""
+        instagramCookieInput = ""
     }
 
     func saveOpenAIKey() {
@@ -50,5 +54,18 @@ final class SettingsViewModel: ObservableObject {
     func clearAssemblyAIKey() {
         KeychainStore.delete(.assemblyAIAPIKey)
         hasAssemblyAIKey = false
+    }
+
+    func saveInstagramCookie() {
+        let trimmed = instagramCookieInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        try? KeychainStore.save(trimmed, for: .instagramSessionCookie)
+        hasInstagramCookie = true
+        instagramCookieInput = ""
+    }
+
+    func clearInstagramCookie() {
+        KeychainStore.delete(.instagramSessionCookie)
+        hasInstagramCookie = false
     }
 }
