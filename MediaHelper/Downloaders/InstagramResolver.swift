@@ -94,11 +94,18 @@ struct InstagramResolver: MediaResolver {
             return result
         }
 
-        // 3. Embed endpoint (`…/embed/captioned`).
-        if let sc = shortcode,
-           let result = try? await resolveViaEmbed(shortcode: sc),
-           result.isVideo {
-            return result
+        // 3. Embed endpoint (`…/embed/captioned`). A `loginRequired` thrown
+        //    here is actionable and must reach the user — don't let `try?`
+        //    swallow it. Any other error just falls through to pass 4.
+        if let sc = shortcode {
+            do {
+                let result = try await resolveViaEmbed(shortcode: sc)
+                if result.isVideo { return result }
+            } catch DownloadError.loginRequired(let p) {
+                throw DownloadError.loginRequired(p)
+            } catch {
+                // Non-actionable — try the next strategy.
+            }
         }
 
         // 4. Canonical page with the IG iOS app UA.
