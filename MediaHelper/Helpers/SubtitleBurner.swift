@@ -166,8 +166,15 @@ enum SubtitleBurner {
         let layerHeight = fontSize * 3.2
         let bottomMargin: CGFloat = shortSide * 0.06
 
-        for seg in segments {
-            guard seg.end > seg.start, !seg.text.isEmpty else { continue }
+        for (i, seg) in segments.enumerated() {
+            guard !seg.text.isEmpty else { continue }
+            // Clamp this caption's end to the next caption's start so two are
+            // never on screen at once. WhisperKit builds segments from chunked
+            // windows whose seams can emit overlapping timestamps; without this
+            // the overlap stacks two text layers and reads as a ghost.
+            let nextStart = i + 1 < segments.count ? segments[i + 1].start : .greatestFiniteMagnitude
+            let end = min(seg.end, nextStart)
+            guard end > seg.start else { continue }
 
             let displayText: String = {
                 if let speaker = seg.speaker, !speaker.isEmpty {
@@ -215,7 +222,7 @@ enum SubtitleBurner {
             let disappear = CABasicAnimation(keyPath: "opacity")
             disappear.fromValue = 1
             disappear.toValue = 0
-            disappear.beginTime = seg.end == 0 ? AVCoreAnimationBeginTimeAtZero : seg.end
+            disappear.beginTime = end == 0 ? AVCoreAnimationBeginTimeAtZero : end
             disappear.duration = 0.0001
             disappear.isRemovedOnCompletion = false
             disappear.fillMode = .forwards
