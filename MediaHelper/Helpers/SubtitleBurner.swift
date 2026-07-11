@@ -15,8 +15,8 @@ import UIKit
 ///      with an opacity animation matching its timestamp window.
 ///   4. Export through `AVAssetExportSession` at `HighestQuality` to mp4.
 ///
-/// Subtitles render at the bottom of the frame with a translucent black
-/// background box (standard social-clip style). For longer segments we
+/// Subtitles render at the bottom of the frame as white text with a soft
+/// drop shadow (Netflix style — no background box). For longer segments we
 /// rely on `SubtitleRenderer`'s wrapping logic — the layer is wide enough
 /// to accommodate two lines.
 enum SubtitleBurner {
@@ -181,13 +181,17 @@ enum SubtitleBurner {
             textLayer.font = CTFontCreateWithName("HelveticaNeue-Bold" as CFString, fontSize, nil)
             textLayer.fontSize = fontSize
             textLayer.foregroundColor = UIColor.white.cgColor
-            textLayer.backgroundColor = UIColor.black.withAlphaComponent(0.55).cgColor
+            // Netflix-style: no background box, just a soft shadow on the
+            // glyphs so white text stays legible over any footage.
+            textLayer.shadowColor = UIColor.black.cgColor
+            textLayer.shadowOpacity = 0.9
+            textLayer.shadowRadius = max(2, round(fontSize * 0.08))
+            textLayer.shadowOffset = CGSize(width: 0, height: round(fontSize * 0.04))
             textLayer.alignmentMode = .center
             textLayer.isWrapped = true
             textLayer.truncationMode = .end
             textLayer.contentsScale = 2
-            textLayer.cornerRadius = 6
-            textLayer.masksToBounds = true
+            textLayer.masksToBounds = false
             textLayer.frame = CGRect(
                 x: horizontalPadding,
                 y: bottomMargin,
