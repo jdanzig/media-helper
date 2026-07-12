@@ -15,8 +15,9 @@ import UIKit
 ///      with an opacity animation matching its timestamp window.
 ///   4. Export through `AVAssetExportSession` at `HighestQuality` to mp4.
 ///
-/// Subtitles render at the bottom of the frame as white text with a soft
-/// drop shadow (Netflix style — no background box). For longer segments we
+/// Subtitles render at the bottom of the frame as white text on a subtle
+/// dark pill that hugs the text. The flat backing keeps H.264 from smearing
+/// the glyph edges over dark footage (the "ghosting"). For longer segments we
 /// rely on `SubtitleRenderer`'s wrapping logic — the layer is wide enough
 /// to accommodate two lines.
 enum SubtitleBurner {
@@ -163,7 +164,6 @@ enum SubtitleBurner {
         let fontSize = max(24, round(shortSide * 0.045))
         let horizontalPadding: CGFloat = shortSide * 0.04
         let layerWidth = renderSize.width - 2 * horizontalPadding
-        let layerHeight = fontSize * 3.2
         let bottomMargin: CGFloat = shortSide * 0.06
 
         for (i, seg) in segments.enumerated() {
@@ -183,29 +183,53 @@ enum SubtitleBurner {
                 return seg.text
             }()
 
+            // Measure the wrapped text so the pill hugs it instead of spanning
+            // the full width (a full-width backing is the heavy grey block we
+            // don't want). Padding is scaled to the font.
+            let padX = fontSize * 0.5
+            let padY = fontSize * 0.28
+            let maxTextWidth = layerWidth - 2 * padX
+            let uiFont = UIFont(name: "HelveticaNeue-Bold", size: fontSize)
+                ?? .boldSystemFont(ofSize: fontSize)
+            let para = NSMutableParagraphStyle()
+            para.alignment = .center
+            para.lineBreakMode = .byWordWrapping
+            let measured = (displayText as NSString).boundingRect(
+                with: CGSize(width: maxTextWidth, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: uiFont, .paragraphStyle: para],
+                context: nil)
+            let textW = min(ceil(measured.width), maxTextWidth)
+            let textH = ceil(measured.height)
+            let pillW = textW + 2 * padX
+            let pillH = textH + 2 * padY
+
+            // Pill: a subtle dark backing that hugs the text. It gives the
+            // H.264 encoder a flat, constant region behind the glyphs, so a
+            // caption change over dark footage doesn't smear the text edges
+            // (the "ghosting"). Text fades with the pill via parent opacity.
+            let pill = CALayer()
+            pill.frame = CGRect(x: (renderSize.width - pillW) / 2,
+                                y: bottomMargin, width: pillW, height: pillH)
+            pill.backgroundColor = UIColor.black.withAlphaComponent(0.45).cgColor
+            pill.cornerRadius = fontSize * 0.28
+            pill.shadowColor = UIColor.black.cgColor
+            pill.shadowOpacity = 0.5
+            pill.shadowRadius = max(2, round(fontSize * 0.06))
+            pill.shadowOffset = CGSize(width: 0, height: round(fontSize * 0.03))
+            pill.opacity = 0
+
             let textLayer = CATextLayer()
             textLayer.string = displayText
             textLayer.font = CTFontCreateWithName("HelveticaNeue-Bold" as CFString, fontSize, nil)
             textLayer.fontSize = fontSize
             textLayer.foregroundColor = UIColor.white.cgColor
-            // Netflix-style: no background box, just a soft shadow on the
-            // glyphs so white text stays legible over any footage.
-            textLayer.shadowColor = UIColor.black.cgColor
-            textLayer.shadowOpacity = 0.9
-            textLayer.shadowRadius = max(2, round(fontSize * 0.08))
-            textLayer.shadowOffset = CGSize(width: 0, height: round(fontSize * 0.04))
             textLayer.alignmentMode = .center
             textLayer.isWrapped = true
             textLayer.truncationMode = .end
             textLayer.contentsScale = 2
-            textLayer.masksToBounds = false
-            textLayer.frame = CGRect(
-                x: horizontalPadding,
-                y: bottomMargin,
-                width: layerWidth,
-                height: layerHeight
-            )
-            textLayer.opacity = 0
+            textLayer.frame = CGRect(x: padX, y: padY, width: textW, height: textH)
+            pill.addSublayer(textLayer)
 
             // Hard on/off opacity animations matching the segment window.
             // AVFoundation interprets layer time via beginTime; zero is
@@ -217,7 +241,7 @@ enum SubtitleBurner {
             appear.duration = 0.0001 // step, not fade
             appear.isRemovedOnCompletion = false
             appear.fillMode = .forwards
-            textLayer.add(appear, forKey: "appear")
+            pill.add(appear, forKey: "appear")
 
             let disappear = CABasicAnimation(keyPath: "opacity")
             disappear.fromValue = 1
@@ -226,9 +250,9 @@ enum SubtitleBurner {
             disappear.duration = 0.0001
             disappear.isRemovedOnCompletion = false
             disappear.fillMode = .forwards
-            textLayer.add(disappear, forKey: "disappear")
+            pill.add(disappear, forKey: "disappear")
 
-            parent.addSublayer(textLayer)
+            parent.addSublayer(pill)
         }
     }
 }
