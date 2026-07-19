@@ -67,10 +67,19 @@ struct InstagramResolver: MediaResolver {
     /// returns a one-element array. Falls back to `resolve()` if the
     /// carousel-aware GraphQL path fails.
     func resolveAll(_ url: URL) async throws -> [ResolverResult] {
-        if let sc = Self.extractShortcode(from: url),
-           let results = try? await resolveAllViaGraphQL(shortcode: sc),
-           !results.isEmpty {
-            return results
+        if let sc = Self.extractShortcode(from: url) {
+            if let results = try? await resolveAllViaGraphQL(shortcode: sc), !results.isEmpty {
+                return results
+            }
+            // GraphQL is dead, and the embed/OpenGraph surfaces only ever expose
+            // the first item — the private API is the only one that returns the
+            // whole carousel. ponytail: needs the stored session cookie; without
+            // one a carousel still collapses to its first item.
+            if let sid = KeychainStore.load(.instagramSessionCookie),
+               let results = try? await resolveAllViaPrivateAPI(shortcode: sc, sessionID: sid),
+               !results.isEmpty {
+                return results
+            }
         }
         // Single-item fallback (also handles Reels / IGTV).
         return [try await resolve(url)]
@@ -352,6 +361,17 @@ struct InstagramResolver: MediaResolver {
     /// redirect) means the cookie is missing/expired → surfaced as loginRequired.
     private func resolveViaPrivateAPI(shortcode: String,
                                       sessionID: String) async throws -> ResolverResult {
+        let all = try await resolveAllViaPrivateAPI(shortcode: shortcode, sessionID: sessionID)
+        guard let first = all.first else {
+            throw DownloadError.resolutionFailed("private API: media item had no URL.")
+        }
+        return first
+    }
+
+    /// Carousel-aware private-API fetch: one result per sidecar child, or a
+    /// single-element array for plain photo/video posts.
+    private func resolveAllViaPrivateAPI(shortcode: String,
+                                         sessionID: String) async throws -> [ResolverResult] {
         guard let mediaID = Self.mediaID(fromShortcode: shortcode) else {
             throw DownloadError.resolutionFailed("couldn't derive media id from shortcode.")
         }
@@ -381,23 +401,27 @@ struct InstagramResolver: MediaResolver {
               let item  = items.first else {
             throw DownloadError.resolutionFailed("private API: unexpected response shape.")
         }
-        return try Self.result(fromMediaItem: item)
+        return try Self.results(fromMediaItem: item)
     }
 
-    /// Build a `ResolverResult` from a private-API media item, preferring the
-    /// highest-quality video. For carousels we descend into the first child.
-    private static func result(fromMediaItem item: [String: Any]) throws -> ResolverResult {
+    /// Build results from a private-API media item. A carousel yields one entry
+    /// per sidecar child (in post order); a plain post yields one entry.
+    private static func results(fromMediaItem item: [String: Any]) throws -> [ResolverResult] {
         let username = (item["user"] as? [String: Any])?["username"] as? String
         let title    = username.map { "@\($0)" }
 
-        // Carousel/sidecar — first child carries the media arrays.
-        let node: [String: Any]
-        if let carousel = item["carousel_media"] as? [[String: Any]], let first = carousel.first {
-            node = first
-        } else {
-            node = item
+        if let carousel = item["carousel_media"] as? [[String: Any]], !carousel.isEmpty {
+            let children = carousel.compactMap { result(fromNode: $0, title: title) }
+            if !children.isEmpty { return children }
         }
+        if let single = result(fromNode: item, title: title) { return [single] }
 
+        throw DownloadError.resolutionFailed("private API: media item had no URL.")
+    }
+
+    /// One media node (a carousel child, or the post itself) → a result,
+    /// preferring the highest-quality video. nil when it carries no usable URL.
+    private static func result(fromNode node: [String: Any], title: String?) -> ResolverResult? {
         var thumbURL: URL?
         if let iv2        = node["image_versions2"] as? [String: Any],
            let candidates = iv2["candidates"]       as? [[String: Any]],
@@ -417,7 +441,7 @@ struct InstagramResolver: MediaResolver {
                                   isVideo: false, platform: .instagram)
         }
 
-        throw DownloadError.resolutionFailed("private API: media item had no URL.")
+        return nil
     }
 
     /// Convert an Instagram shortcode to its numeric media id (PK). Shortcodes
