@@ -30,6 +30,15 @@ struct TikTokResolver: MediaResolver {
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = true
         config.httpCookieAcceptPolicy = .always
+        // Age/sensitivity-gated posts only expose playAddr to a logged-in
+        // session. If the user saved a TikTok sessionid, seed the jar with it
+        // so both the landing scrape and the CDN download go out authenticated.
+        if let sid = KeychainStore.load(.tiktokSessionCookie),
+           let cookie = HTTPCookie(properties: [
+               .name: "sessionid", .value: sid, .domain: ".tiktok.com", .path: "/"
+           ]) {
+            config.httpCookieStorage?.setCookie(cookie)
+        }
         let session = URLSession(configuration: config)
         defer { session.finishTasksAndInvalidate() }
 
@@ -109,6 +118,10 @@ struct TikTokResolver: MediaResolver {
             )
         }
 
+        // No play URL and the page is an age/sensitivity gate → needs login.
+        if html.contains("AgeGate") || html.contains("not be comfortable") {
+            throw DownloadError.loginRequired(.tiktok)
+        }
         throw DownloadError.resolutionFailed(
             "TikTok didn't expose playAddr/og:video — markup may have changed."
         )

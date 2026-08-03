@@ -51,7 +51,7 @@ enum DownloadError: LocalizedError {
         case .saveFailed(let why):
             return "Couldn't save to Photos: \(why)"
         case .loginRequired(let p):
-            return "\(p.displayName) requires login for this post. Add your session cookie in Settings → Instagram."
+            return "\(p.displayName) requires login for this post. Add your session cookie in Settings → \(p.displayName)."
         }
     }
 }

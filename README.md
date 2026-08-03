@@ -13,6 +13,8 @@ A personal iOS utility for downloading social media content, transcribing videos
 
 Paste a URL from YouTube, X/Twitter, TikTok, Instagram, Facebook, Threads, Streamable, or Vimeo. The app downloads the media (including Instagram carousels) and optionally runs transcription on it. Downloaded files can be shared or saved directly to Photos.
 
+Each platform is resolved differently, and those strategies go stale when the platforms change. [RESOLVERS.md](RESOLVERS.md) documents the per-platform endpoints, required headers, JSON paths, and known failure modes — start there when a download breaks.
+
 ### Transcribe
 
 Pick a video from your Photo Library. Choose output formats (`.srt` subtitles, `.txt` transcript, save to Photos), select a backend, and tap Start. Results are offered via the share sheet.

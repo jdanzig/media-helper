@@ -14,6 +14,7 @@ enum KeychainStore {
         case openAIAPIKey         = "openai.apiKey"
         case assemblyAIAPIKey     = "assemblyai.apiKey"
         case instagramSessionCookie = "instagram.sessionCookie"
+        case tiktokSessionCookie    = "tiktok.sessionCookie"
     }
 
     private static let service = "com.example.MediaHelper.keys"

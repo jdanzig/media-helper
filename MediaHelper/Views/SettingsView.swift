@@ -29,33 +29,19 @@ struct SettingsView: View {
                            onSave: vm.saveAssemblyAIKey,
                            onClear: vm.clearAssemblyAIKey)
 
-                Section(header: Text("Instagram")) {
-                    Text("Some posts are restricted to logged-in users. Paste your sessionid cookie here to unlock them. Get it from Instagram.com → DevTools → Application → Cookies.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                cookieSection(title: "Instagram",
+                              tagline: "Some posts are restricted to logged-in users. Paste your sessionid cookie here to unlock them. Get it from Instagram.com → DevTools → Application → Cookies.",
+                              hasCookie: vm.hasInstagramCookie,
+                              input: $vm.instagramCookieInput,
+                              onSave: vm.saveInstagramCookie,
+                              onClear: vm.clearInstagramCookie)
 
-                    if vm.hasInstagramCookie {
-                        HStack {
-                            Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-                            Text("Cookie saved")
-                            Spacer()
-                            Button("Remove", role: .destructive, action: vm.clearInstagramCookie)
-                                .buttonStyle(.borderless)
-                        }
-                    }
-
-                    TextField(vm.hasInstagramCookie ? "Replace sessionid (optional)" : "sessionid value",
-                              text: $vm.instagramCookieInput)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-
-                    Button {
-                        vm.saveInstagramCookie()
-                    } label: {
-                        Label(vm.hasInstagramCookie ? "Replace" : "Save", systemImage: "square.and.arrow.down")
-                    }
-                    .disabled(vm.instagramCookieInput.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
+                cookieSection(title: "TikTok",
+                              tagline: "Age-restricted posts need a login. Paste your sessionid cookie to unlock them. Get it from TikTok.com → DevTools → Application → Cookies.",
+                              hasCookie: vm.hasTikTokCookie,
+                              input: $vm.tiktokCookieInput,
+                              onSave: vm.saveTikTokCookie,
+                              onClear: vm.clearTikTokCookie)
             }
             .navigationTitle("Settings")
             .onAppear { vm.reload() }
@@ -92,6 +78,43 @@ struct SettingsView: View {
                 onSave()
             } label: {
                 Label(hasKey ? "Replace" : "Save", systemImage: "square.and.arrow.down")
+            }
+            .disabled(input.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+    }
+
+    /// Like `keySection` but for a pasted session cookie: plain TextField
+    /// (so the user can verify the value) and cookie-flavoured copy.
+    @ViewBuilder
+    private func cookieSection(title: String,
+                               tagline: String,
+                               hasCookie: Bool,
+                               input: Binding<String>,
+                               onSave: @escaping () -> Void,
+                               onClear: @escaping () -> Void) -> some View {
+        Section(header: Text(title)) {
+            Text(tagline)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            if hasCookie {
+                HStack {
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                    Text("Cookie saved")
+                    Spacer()
+                    Button("Remove", role: .destructive, action: onClear)
+                        .buttonStyle(.borderless)
+                }
+            }
+
+            TextField(hasCookie ? "Replace sessionid (optional)" : "sessionid value", text: input)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            Button {
+                onSave()
+            } label: {
+                Label(hasCookie ? "Replace" : "Save", systemImage: "square.and.arrow.down")
             }
             .disabled(input.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty)
         }
