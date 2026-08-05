@@ -1,0 +1,6 @@
+<resources>
+    <!-- XML theme is only the window shell; Compose MaterialTheme (Theme.kt)
+         does the real theming, including dark mode. Parent is an OS built-in
+         so no extra Material XML dependency is needed. -->
+    <style name="Theme.MediaHelper" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
