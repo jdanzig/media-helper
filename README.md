@@ -1,48 +1,38 @@
 # MediaHelper
 
-A personal iOS utility for downloading social media content, transcribing videos, stitching images together, and squarifying photos for square-format posts.
+A personal utility for downloading social media content, transcribing videos, stitching images together, and squarifying photos for square-format posts.
 
-## Requirements
+This is a monorepo holding two near-identical native apps that mirror each other's features:
 
-- iOS 17+
-- Xcode 15+
+```
+ios/      SwiftUI app (iOS 17+, Xcode)
+android/  Jetpack Compose app (Kotlin, Android Studio)
+docs/     Shared, platform-agnostic specs — start with RESOLVERS.md
+```
 
 ## Features
 
+Both apps offer the same five tabs:
+
 ### Download
 
-Paste a URL from YouTube, X/Twitter, TikTok, Instagram, Facebook, Threads, Streamable, or Vimeo. The app downloads the media (including Instagram carousels) and optionally runs transcription on it. Downloaded files can be shared or saved directly to Photos.
+Paste a URL from YouTube, X/Twitter, TikTok, Instagram, Facebook, Threads, Streamable, or Vimeo. The app downloads the media (including Instagram carousels) and optionally runs transcription on it. Downloaded files can be shared or saved to the photo library. Some platforms gate content behind a login — paste a session cookie in Settings to unlock those.
 
-Each platform is resolved differently, and those strategies go stale when the platforms change. [RESOLVERS.md](RESOLVERS.md) documents the per-platform endpoints, required headers, JSON paths, and known failure modes — start there when a download breaks.
+Each platform is resolved differently, and those strategies go stale when the platforms change. [docs/RESOLVERS.md](docs/RESOLVERS.md) documents the per-platform endpoints, required headers, JSON paths, and known failure modes — it's the shared source of truth both apps implement, so start there when a download breaks.
 
 ### Transcribe
 
-Pick a video from your Photo Library. Choose output formats (`.srt` subtitles, `.txt` transcript, save to Photos), select a backend, and tap Start. Results are offered via the share sheet.
+Pick a video, choose output formats (`.srt` subtitles, `.txt` transcript, save to library), select a transcription backend, and run it. Results are offered via the share sheet.
 
 ### Stitch
 
-Combine multiple images into a single composite image.
-
-- Pick up to 20 images from Photos (ordered selection)
-- Choose vertical (stacked) or horizontal (side-by-side) layout
-- Toggle a 1px divider line between images
-- Reorder images by long-pressing a thumbnail and dragging it left or right
-- Remove individual images with the × button on each thumbnail
-- Pinch/pan the preview; save the result to Photos
-
-Vertical stitch normalizes all images to the narrowest width; horizontal normalizes to the shortest height.
+Combine up to 20 images into a single composite (vertical or horizontal), with reordering, an optional divider line, and pinch/pan preview.
 
 ### Squarify
 
-Make a rectangular image square by adding a solid background border, matching the color of the image's top-left pixel — the same approach Instagram uses for portrait/landscape photos posted to a square grid.
-
-- Pinch to zoom (minimum: fit-inside-canvas; maximum: 6× fit)
-- Drag to reposition
-- Reset position button
-- Save the composited square image to Photos
+Make a rectangular image square by adding a solid background border matching the image's top-left pixel color — the approach Instagram uses for non-square photos.
 
 ## Building
 
-Open `MediaHelper.xcodeproj` in Xcode, select a simulator or device running iOS 17+, and build (`⌘B`) or run (`⌘R`).
-
-No external dependencies or package manager setup required.
+- **iOS** — open `ios/MediaHelper.xcodeproj` in Xcode, pick a simulator or device on iOS 17+, and build (`⌘B`) / run (`⌘R`). No package manager setup required.
+- **Android** — open the `android/` folder in Android Studio and let it sync Gradle, then run on an emulator or device.
