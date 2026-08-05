@@ -17,9 +17,6 @@ private fun Placeholder(name: String, modifier: Modifier) {
 }
 
 @Composable
-fun DownloadScreen(modifier: Modifier = Modifier) = Placeholder("Download", modifier)
-
-@Composable
 fun TranscribeScreen(modifier: Modifier = Modifier) = Placeholder("Transcribe", modifier)
 
 @Composable
@@ -27,6 +24,3 @@ fun StitchScreen(modifier: Modifier = Modifier) = Placeholder("Stitch", modifier
 
 @Composable
 fun SquarifyScreen(modifier: Modifier = Modifier) = Placeholder("Squarify", modifier)
-
-@Composable
-fun SettingsScreen(modifier: Modifier = Modifier) = Placeholder("Settings", modifier)
