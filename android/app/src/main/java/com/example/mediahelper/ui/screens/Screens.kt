@@ -7,8 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 
-// Placeholders mirroring the iOS tabs. Real content lands feature by feature;
-// split into one file per screen (as on iOS) once each grows past a stub.
+// Remaining placeholder — Transcribe lands in a later milestone.
 @Composable
 private fun Placeholder(name: String, modifier: Modifier) {
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -18,9 +17,3 @@ private fun Placeholder(name: String, modifier: Modifier) {
 
 @Composable
 fun TranscribeScreen(modifier: Modifier = Modifier) = Placeholder("Transcribe", modifier)
-
-@Composable
-fun StitchScreen(modifier: Modifier = Modifier) = Placeholder("Stitch", modifier)
-
-@Composable
-fun SquarifyScreen(modifier: Modifier = Modifier) = Placeholder("Squarify", modifier)

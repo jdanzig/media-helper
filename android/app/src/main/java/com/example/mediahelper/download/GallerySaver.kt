@@ -2,12 +2,14 @@ package com.example.mediahelper.download
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
 
 /** Saves media to the device gallery via MediaStore (scoped storage, API 29+).
  *  Mirrors iOS PhotoLibrarySaver. No runtime permission needed on API 29+. */
@@ -18,6 +20,13 @@ object GallerySaver {
 
     suspend fun saveImage(context: Context, file: File): Uri =
         insert(context, file, isVideo = false)
+
+    /** Compress a bitmap to JPEG and save it (Stitch/Squarify outputs). */
+    suspend fun saveBitmap(context: Context, bitmap: Bitmap): Uri = withContext(Dispatchers.IO) {
+        val file = File(context.cacheDir, "${UUID.randomUUID()}.jpg")
+        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+        insert(context, file, isVideo = false)
+    }
 
     private suspend fun insert(context: Context, file: File, isVideo: Boolean): Uri =
         withContext(Dispatchers.IO) {
